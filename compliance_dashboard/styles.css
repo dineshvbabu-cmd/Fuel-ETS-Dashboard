@@ -239,6 +239,7 @@ h4 {
 .kpi-card {
   border-radius: 18px;
   padding: 14px;
+  text-align: left;
 }
 
 .kpi-card.tone-risk .kpi-value {
@@ -300,7 +301,7 @@ h4 {
 
 .dashboard-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.75fr) 420px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(520px, 0.95fr);
   gap: 16px;
 }
 
@@ -372,7 +373,7 @@ h4 {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 640px;
+  min-width: 760px;
 }
 
 th,
@@ -597,6 +598,10 @@ textarea:hover {
 
 button:hover {
   transform: translateY(-1px);
+}
+
+.kpi-card:hover {
+  border-color: rgba(67, 134, 213, 0.28);
 }
 
 @media (max-width: 1360px) {

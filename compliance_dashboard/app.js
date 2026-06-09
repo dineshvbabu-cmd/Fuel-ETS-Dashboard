@@ -244,6 +244,7 @@ function renderKpis() {
   const dashboard = computeFilteredDashboard(getActiveRows());
   const cards = [
     {
+      key: "total-euas",
       label: "Total EUAs required",
       value: `${formatNumber(dashboard.totalEuasRequired, 1)}`,
       detail: "t CO2eq",
@@ -251,6 +252,7 @@ function renderKpis() {
       tone: "risk",
     },
     {
+      key: "total-cost",
       label: "Total EUA cost",
       value: `${formatCurrency(dashboard.totalEuasCost)}`,
       detail: `@ EUR ${formatInteger(stateStore.derived.parameterValues.euaPrice)} / EUA`,
@@ -258,6 +260,7 @@ function renderKpis() {
       tone: "warn",
     },
     {
+      key: "compliance-balance",
       label: "Compliance balance",
       value: `${dashboard.complianceBalance >= 0 ? "+" : ""}${formatNumber(dashboard.complianceBalance, 1)}`,
       detail: "t CO2eq surplus / deficit",
@@ -265,6 +268,7 @@ function renderKpis() {
       tone: dashboard.complianceBalance >= 0 ? "good" : "risk",
     },
     {
+      key: "penalty",
       label: "FuelEU penalty",
       value: `${formatCurrency(dashboard.totalPenalty)}`,
       detail: dashboard.totalPenalty > 0 ? "Penalty triggered by deficits" : "No penalty due",
@@ -272,6 +276,7 @@ function renderKpis() {
       tone: dashboard.totalPenalty > 0 ? "risk" : "good",
     },
     {
+      key: "avg-ghg",
       label: "Avg GHG intensity",
       value: `${formatNumber(dashboard.averageIntensity, 2)}`,
       detail: `g/MJ vs ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 2)} target`,
@@ -279,6 +284,7 @@ function renderKpis() {
       tone: dashboard.averageIntensity <= stateStore.derived.parameterValues.fueleuTarget ? "good" : "warn",
     },
     {
+      key: "fuel-consumed",
       label: "Total fuel consumed",
       value: `${formatNumber(dashboard.totalFuelConsumed, 1)}`,
       detail: "MT all fuel types",
@@ -286,6 +292,7 @@ function renderKpis() {
       tone: "neutral",
     },
     {
+      key: "voyages",
       label: "Voyage records",
       value: `${formatInteger(dashboard.voyageRows.length)}`,
       detail: "Click charts to view voyages",
@@ -293,6 +300,7 @@ function renderKpis() {
       tone: "neutral",
     },
     {
+      key: "port-stays",
       label: "Port stay records",
       value: `${formatInteger(dashboard.portStayRows.length)}`,
       detail: "Click charts to view port stays",
@@ -304,12 +312,12 @@ function renderKpis() {
   elements.kpiGrid.innerHTML = cards
     .map(
       (card) => `
-        <article class="kpi-card tone-${card.tone}">
+        <button class="kpi-card tone-${card.tone}" type="button" data-action="open-kpi-drilldown" data-kpi="${card.key}">
           <div class="kpi-label">${card.label}</div>
           <div class="kpi-value">${card.value}</div>
           <div class="kpi-detail">${card.detail}</div>
           <div class="kpi-note">${card.note}</div>
-        </article>
+        </button>
       `
     )
     .join("");
@@ -329,6 +337,149 @@ function openDrilldown(title, subtitle, columns, rows) {
 function closeDrilldown() {
   stateStore.ui.drilldown = null;
   render();
+}
+
+function openKpiDrilldown(kpiKey) {
+  const activeRows = getActiveRows();
+  const dashboard = computeFilteredDashboard(activeRows);
+
+  if (kpiKey === "total-euas") {
+    openDrilldown(
+      "Total EUAs required",
+      "Rows contributing to the current EUA total.",
+      ["Record", "Vessel", "Route", "Type", "EUAs Required", "ETS CO2eq"],
+      activeRows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        row.type,
+        formatNumber(row.euasRequiredT, 3),
+        formatNumber(row.etsInScopeCo2eqT, 3),
+      ])
+    );
+    return;
+  }
+
+  if (kpiKey === "total-cost") {
+    openDrilldown(
+      "Total EUA cost",
+      "Rows contributing to the current ETS cost.",
+      ["Record", "Vessel", "Route", "EUAs Required", "ETS Cost"],
+      activeRows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        formatNumber(row.euasRequiredT, 3),
+        formatCurrency(row.euasCostEur),
+      ])
+    );
+    return;
+  }
+
+  if (kpiKey === "compliance-balance") {
+    openDrilldown(
+      "Compliance balance",
+      "FuelEU balance by record for the current filter.",
+      ["Record", "Vessel", "Route", "GHG Intensity", "Target", "Compliance Balance"],
+      activeRows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        formatNumber(row.attainedGhgIntensity, 3),
+        formatNumber(row.targetGhgIntensity, 3),
+        formatNumber(row.complianceBalanceT, 3),
+      ])
+    );
+    return;
+  }
+
+  if (kpiKey === "penalty") {
+    openDrilldown(
+      "FuelEU penalty",
+      "Penalty-bearing rows for the current filter.",
+      ["Record", "Vessel", "Route", "Compliance Balance", "Penalty"],
+      activeRows
+        .filter((row) => numberOrZero(row.fuelEuPenaltyEur) > 0)
+        .map((row) => [
+          row.recordId,
+          row.vesselName,
+          row.route,
+          formatNumber(row.complianceBalanceT, 3),
+          formatCurrency(row.fuelEuPenaltyEur),
+        ])
+    );
+    return;
+  }
+
+  if (kpiKey === "avg-ghg") {
+    openDrilldown(
+      "Average GHG intensity",
+      `Fleet average ${formatNumber(dashboard.averageIntensity, 3)} g/MJ against target ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 3)} g/MJ.`,
+      ["Record", "Vessel", "Route", "Type", "GHG Intensity", "Target"],
+      activeRows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        row.type,
+        formatNumber(row.attainedGhgIntensity, 3),
+        formatNumber(row.targetGhgIntensity, 3),
+      ])
+    );
+    return;
+  }
+
+  if (kpiKey === "fuel-consumed") {
+    openDrilldown(
+      "Total fuel consumed",
+      "Fuel consumption split by record.",
+      ["Record", "Vessel", "Fuel 1 MT", "Fuel 2 MT", "Bio MT", "Total MT"],
+      activeRows.map((row) => {
+        const total = numberOrZero(row.fuel1ConsumptionMt) + numberOrZero(row.fuel2ConsumptionMt) + numberOrZero(row.bioFuelConsumptionMt);
+        return [
+          row.recordId,
+          row.vesselName,
+          formatNumber(row.fuel1ConsumptionMt, 2),
+          formatNumber(row.fuel2ConsumptionMt, 2),
+          formatNumber(row.bioFuelConsumptionMt, 2),
+          formatNumber(total, 2),
+        ];
+      })
+    );
+    return;
+  }
+
+  if (kpiKey === "voyages") {
+    openDrilldown(
+      "Voyage records",
+      "Current filtered voyage rows.",
+      ["Record", "Vessel", "Route", "EUAs", "GHG Intensity", "ETS Cost"],
+      dashboard.voyageRows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        formatNumber(row.euasRequiredT, 3),
+        formatNumber(row.attainedGhgIntensity, 3),
+        formatCurrency(row.euasCostEur),
+      ])
+    );
+    return;
+  }
+
+  if (kpiKey === "port-stays") {
+    openDrilldown(
+      "Port stay records",
+      "Current filtered port stay rows.",
+      ["Record", "Vessel", "Route", "EUAs", "GHG Intensity", "ETS Cost"],
+      dashboard.portStayRows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        formatNumber(row.euasRequiredT, 3),
+        formatNumber(row.attainedGhgIntensity, 3),
+        formatCurrency(row.euasCostEur),
+      ])
+    );
+  }
 }
 
 function renderDrilldownPane() {
@@ -1148,6 +1299,11 @@ function handleMainClick(event) {
 
   if (action === "close-drilldown") {
     closeDrilldown();
+    return;
+  }
+
+  if (action === "open-kpi-drilldown") {
+    openKpiDrilldown(actionTarget.dataset.kpi);
   }
 }
 
