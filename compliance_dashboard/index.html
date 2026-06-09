@@ -3,92 +3,61 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EU ETS and FuelEU Compliance Dashboard</title>
+  <title>Fuel ETS Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="ambient ambient-a"></div>
   <div class="ambient ambient-b"></div>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand-card">
-        <p class="eyebrow">Workbook to Web App</p>
-        <h1>Compliance Studio</h1>
-        <p class="lede">
-          EU ETS and FuelEU Maritime dashboard built from your Excel calculator, with live editable sheet data and spreadsheet-equivalent calculations.
-        </p>
+
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Operational Compliance</p>
+        <h1>Fuel ETS Dashboard</h1>
+        <p class="topbar-copy">Voyage-level EU ETS and FuelEU analytics with in-app calculator inputs and a hidden reference library.</p>
       </div>
 
-      <section class="side-panel">
-        <div class="panel-head compact">
-          <div>
-            <p class="eyebrow">Workbook Status</p>
-            <h2>Connected Model</h2>
-          </div>
-          <span class="status-pill">Ready</span>
-        </div>
-        <dl class="meta-grid" id="metaGrid"></dl>
-      </section>
+      <div class="topbar-controls">
+        <div id="viewTabs" class="view-tabs"></div>
 
-      <section class="side-panel">
-        <div class="panel-head compact">
-          <div>
-            <p class="eyebrow">Sheets</p>
-            <h2>Navigate</h2>
-          </div>
-        </div>
-        <div class="sheet-tabs" id="sheetTabs"></div>
-      </section>
+        <label class="toolbar-field">
+          <span>Vessel filter</span>
+          <select id="vesselFilter" class="toolbar-select"></select>
+        </label>
 
-      <section class="side-panel">
-        <div class="panel-head compact">
-          <div>
-            <p class="eyebrow">Actions</p>
-            <h2>Data Control</h2>
-          </div>
-        </div>
-        <div class="action-stack">
-          <button id="resetWorkbookButton" class="ghost-button" type="button">Reset to workbook seed</button>
-          <button id="exportStateButton" class="primary-button" type="button">Export current data</button>
-        </div>
-      </section>
-    </aside>
+        <button id="libraryToggleButton" class="icon-button" type="button" title="Open calculation library">☰</button>
+        <button id="exportFilteredButton" class="icon-button" type="button" title="Export selected vessel data">⤓</button>
+        <button id="resetWorkbookButton" class="icon-button" type="button" title="Reset all scenario data">↺</button>
+      </div>
+    </header>
 
-    <main class="workspace">
-      <header class="hero-card">
-        <div>
-          <p class="eyebrow">Operational Dashboard</p>
-          <h2 id="viewTitle">Dashboard</h2>
-          <p class="hero-copy" id="viewDescription">
-            Review fleet exposure, update calculator inputs, and maintain reference sheets without leaving the dashboard.
-          </p>
-        </div>
-        <div class="hero-actions">
-          <div class="hero-chip">
-            <span class="hero-chip-label">Source workbook</span>
-            <strong id="sourceWorkbook">Loading...</strong>
-          </div>
-          <div class="hero-chip">
-            <span class="hero-chip-label">State storage</span>
-            <strong>Browser local cache</strong>
-          </div>
-        </div>
-      </header>
-
-      <section class="kpi-grid" id="kpiGrid"></section>
-      <section class="content-view" id="contentView"></section>
-    </main>
+    <section id="kpiGrid" class="kpi-grid"></section>
+    <main id="contentView" class="content-view"></main>
   </div>
+
+  <div id="libraryBackdrop" class="library-backdrop"></div>
+  <aside id="libraryDrawer" class="library-drawer">
+    <div class="library-head">
+      <div>
+        <p class="eyebrow">Reference Library</p>
+        <h2>Hidden Calculation Sheets</h2>
+      </div>
+      <button id="closeLibraryButton" class="icon-button compact" type="button" title="Close library">✕</button>
+    </div>
+    <div id="libraryTabs" class="sheet-tabs"></div>
+    <div id="libraryContent" class="library-content"></div>
+  </aside>
 
   <dialog id="rowEditorDialog" class="editor-dialog">
     <form method="dialog" class="editor-dialog-shell">
       <div class="editor-dialog-head">
         <div>
-          <p class="eyebrow">Sheet Row Editor</p>
+          <p class="eyebrow">Reference Row Editor</p>
           <h3 id="editorDialogTitle">Edit row</h3>
         </div>
-        <button id="closeEditorButton" class="ghost-button" type="button">Close</button>
+        <button id="closeEditorButton" class="icon-button compact" type="button">✕</button>
       </div>
       <div id="editorDialogBody" class="editor-dialog-body"></div>
       <div class="editor-dialog-actions">

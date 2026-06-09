@@ -13,18 +13,22 @@ import {
   recalculateWorkbook,
 } from "./engine.js";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 18;
+const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 
 const elements = {
-  metaGrid: document.getElementById("metaGrid"),
-  sheetTabs: document.getElementById("sheetTabs"),
+  viewTabs: document.getElementById("viewTabs"),
+  vesselFilter: document.getElementById("vesselFilter"),
+  libraryToggleButton: document.getElementById("libraryToggleButton"),
+  exportFilteredButton: document.getElementById("exportFilteredButton"),
   resetWorkbookButton: document.getElementById("resetWorkbookButton"),
-  exportStateButton: document.getElementById("exportStateButton"),
-  viewTitle: document.getElementById("viewTitle"),
-  viewDescription: document.getElementById("viewDescription"),
-  sourceWorkbook: document.getElementById("sourceWorkbook"),
   kpiGrid: document.getElementById("kpiGrid"),
   contentView: document.getElementById("contentView"),
+  libraryDrawer: document.getElementById("libraryDrawer"),
+  libraryTabs: document.getElementById("libraryTabs"),
+  libraryContent: document.getElementById("libraryContent"),
+  libraryBackdrop: document.getElementById("libraryBackdrop"),
+  closeLibraryButton: document.getElementById("closeLibraryButton"),
   rowEditorDialog: document.getElementById("rowEditorDialog"),
   editorDialogTitle: document.getElementById("editorDialogTitle"),
   editorDialogBody: document.getElementById("editorDialogBody"),
@@ -35,72 +39,29 @@ const elements = {
   imoNumbers: document.getElementById("imoNumbers"),
 };
 
-const viewMeta = {
-  dashboard: {
-    title: "Fleet Exposure Dashboard",
-    description: "Review the same allowance, intensity, balance, and penalty outputs that the Excel dashboard rolls up from the Calculator sheet.",
-  },
-  calculator: {
-    title: "Calculator Input and Output",
-    description: "Orange fields are editable voyage inputs. Blue cards and tables are spreadsheet-style calculated outputs from the same row.",
-  },
-  vesselSummary: {
-    title: "Vessel Summary",
-    description: "Aggregate the calculator data per vessel, just like the workbook summary, with allowance totals and compliance balance status.",
-  },
-  parameters: {
-    title: "Parameters Sheet",
-    description: "Maintain reporting year, EUA price, FuelEU targets, GWP assumptions, and electricity factors that drive the rest of the workbook.",
-  },
-  fuelReference: {
-    title: "Fuel Reference Sheet",
-    description: "Edit fuel pathways, calorific values, WtT assumptions, ETS factors, and fuel-specific coefficients used by the calculator.",
-  },
-  fleet: {
-    title: "Fleet Database",
-    description: "Maintain the IMO master data used to auto-fill vessel name, ship type, flag, and tonnages from the calculator.",
-  },
-  ports: {
-    title: "Port Database",
-    description: "Edit UN/LOCODE, country, EU or EEA scope, outermost-region status, and other route classification data.",
-  },
-  flags: {
-    title: "Flag States",
-    description: "Edit the reference list used for ship registry context and dropdown support.",
-  },
-  derogations: {
-    title: "Derogations",
-    description: "Maintain the derogation reference list for outermost regions and policy guidance context.",
-  },
-  methodology: {
-    title: "Methodology Notes",
-    description: "The regulatory methodology notes are editable in the dashboard so the guidance can stay in line with your internal model.",
-  },
-  formulaGuide: {
-    title: "Formula Guide",
-    description: "Review and update the plain-English explanation of the workbook formula logic from directly inside the application.",
-  },
-};
-
-const numericColumns = {
-  fuelReference: new Set(["lcvMjPerG", "wtwTankToWakePerG", "rwd", "etsCo2Cf", "cfCo2PerG", "cfCh4PerG", "cfN2oPerG", "cslipPercent"]),
-  fleet: new Set(["imoNo", "gt", "nt", "summerDwt", "built"]),
-  derogations: new Set(["serialNo"]),
-};
-
 const stateStore = {
   seedState: null,
   state: null,
   derived: null,
+  charts: {},
   ui: {
-    activeSheet: "dashboard",
+    activeView: "dashboard",
+    vesselFilter: "all",
     calculatorSearch: "",
     calculatorSelectedId: null,
-    editorSearch: "",
-    editorPage: 1,
+    libraryOpen: false,
+    librarySheet: "parameters",
+    librarySearch: "",
+    libraryPage: 1,
     dialog: null,
+    drilldown: null,
   },
-  charts: {},
+};
+
+const numericColumns = {
+  fuelReference: new Set(["lcvMjPerG", "wtWPerMj", "rwd", "etsCo2Cf", "cfCo2PerG", "cfCh4PerG", "cfN2oPerG", "cslipPercent"]),
+  fleet: new Set(["imoNo", "gt", "nt", "summerDwt", "built"]),
+  derogations: new Set(["serialNo"]),
 };
 
 function formatNumber(value, digits = 2) {
@@ -109,7 +70,7 @@ function formatNumber(value, digits = 2) {
   }
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: digits,
-    minimumFractionDigits: digits === 0 ? 0 : 0,
+    minimumFractionDigits: 0,
   }).format(Number(value));
 }
 
@@ -128,35 +89,22 @@ function formatCurrency(value) {
   }).format(Number(value));
 }
 
-function formatPercent(value) {
-  return `${formatNumber((Number(value) || 0) * 100, 0)}%`;
+function formatPercent(value, digits = 0) {
+  return `${formatNumber((Number(value) || 0) * 100, digits)}%`;
 }
 
 function lower(value) {
   return normalizeText(value).toLowerCase();
 }
 
-function getCollection(sheetKey) {
-  return stateStore.state[sheetKey];
-}
-
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
-}
-
-function recomputeAndRender() {
-  stateStore.derived = recalculateWorkbook(stateStore.state);
-  stateStore.state.parameters = deepClone(stateStore.derived.parameters);
-  saveState();
-  render();
 }
 
 function hydrateFromStorage(seedState) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return deepClone(seedState);
-    }
+    if (!raw) return deepClone(seedState);
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.calculatorRows) || !Array.isArray(parsed.parameters)) {
       return deepClone(seedState);
@@ -167,82 +115,25 @@ function hydrateFromStorage(seedState) {
   }
 }
 
-function downloadJson(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+function getCollection(sheetKey) {
+  return stateStore.state[sheetKey];
 }
 
-function renderMetaGrid() {
-  const generatedAt = new Date(stateStore.state.meta.generatedAt);
-  const rows = [
-    ["Generated", Number.isNaN(generatedAt.getTime()) ? stateStore.state.meta.generatedAt : generatedAt.toLocaleString()],
-    ["Calculator rows", formatInteger(stateStore.state.calculatorRows.length)],
-    ["Fleet records", formatInteger(stateStore.state.fleet.length)],
-    ["Port records", formatInteger(stateStore.state.ports.length)],
-    ["Fuel rows", formatInteger(stateStore.state.fuelReference.length)],
-    ["Storage", "Local browser cache"],
-  ];
-
-  elements.metaGrid.innerHTML = rows
-    .map(
-      ([label, value]) => `
-        <div class="meta-row">
-          <dt>${label}</dt>
-          <dd>${value}</dd>
-        </div>
-      `
-    )
-    .join("");
+function recomputeAndRender() {
+  stateStore.derived = recalculateWorkbook(stateStore.state);
+  stateStore.state.parameters = deepClone(stateStore.derived.parameters);
+  saveState();
+  render();
 }
 
-function renderSheetTabs() {
-  elements.sheetTabs.innerHTML = SHEETS.map(
-    (sheet) => `
-      <button
-        class="sheet-tab ${stateStore.ui.activeSheet === sheet.key ? "active" : ""}"
-        type="button"
-        data-action="select-sheet"
-        data-sheet="${sheet.key}"
-      >
-        ${sheet.label}
-      </button>
-    `
-  ).join("");
-}
-
-function renderKpis() {
-  elements.kpiGrid.innerHTML = stateStore.derived.dashboard.kpis
-    .map(
-      (kpi) => `
-        <article class="kpi-card tone-${kpi.tone || "neutral"}">
-          <div class="kpi-label">${kpi.label}</div>
-          <div class="kpi-value">${typeof kpi.value === "number" ? formatNumber(kpi.value, 2) : kpi.value}</div>
-          <div class="kpi-detail">${kpi.detail}</div>
-        </article>
-      `
-    )
-    .join("");
-}
-
-function ensureCalculatorSelection() {
-  const rows = stateStore.derived.calculatorRows;
-  const selected = rows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
-  if (selected) {
-    return selected;
-  }
-  const firstActive = rows.find((row) => row.recordId) || rows[0];
-  stateStore.ui.calculatorSelectedId = firstActive?.id || null;
-  return firstActive || null;
+function destroyCharts() {
+  Object.values(stateStore.charts).forEach((chart) => chart.destroy());
+  stateStore.charts = {};
 }
 
 function buildDataLists() {
   elements.portCodes.innerHTML = stateStore.state.ports
-    .slice(0, 10000)
+    .slice(0, 12000)
     .map((row) => `<option value="${row.unlocode}">${row.portName}</option>`)
     .join("");
 
@@ -255,217 +146,498 @@ function buildDataLists() {
     .join("");
 }
 
+function renderViewTabs() {
+  elements.viewTabs.innerHTML = [
+    ["dashboard", "Dashboard"],
+    ["calculator", "Calculator"],
+  ]
+    .map(
+      ([key, label]) => `
+        <button
+          class="view-tab ${stateStore.ui.activeView === key ? "active" : ""}"
+          type="button"
+          data-action="select-view"
+          data-view="${key}"
+        >
+          ${label}
+        </button>
+      `
+    )
+    .join("");
+}
+
+function getActiveRows() {
+  const allRows = stateStore.derived.calculatorRows.filter((row) => row.recordId);
+  if (stateStore.ui.vesselFilter === "all") {
+    return allRows;
+  }
+  return allRows.filter((row) => row.vesselName === stateStore.ui.vesselFilter);
+}
+
+function getVisibleVessels() {
+  return [...new Set(stateStore.derived.calculatorRows.filter((row) => row.recordId).map((row) => row.vesselName).filter(Boolean))].sort();
+}
+
+function renderVesselFilter() {
+  const vessels = getVisibleVessels();
+  elements.vesselFilter.innerHTML = [
+    `<option value="all">All vessels</option>`,
+    ...vessels.map((vessel) => `<option value="${vessel}">${vessel}</option>`),
+  ].join("");
+  elements.vesselFilter.value = vessels.includes(stateStore.ui.vesselFilter) ? stateStore.ui.vesselFilter : "all";
+  if (!vessels.includes(stateStore.ui.vesselFilter) && stateStore.ui.vesselFilter !== "all") {
+    stateStore.ui.vesselFilter = "all";
+  }
+}
+
+function computeFilteredDashboard(activeRows) {
+  const totalEuasRequired = activeRows.reduce((sum, row) => sum + numberOrZero(row.euasRequiredT), 0);
+  const totalEuasCost = activeRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
+  const totalPenalty = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuPenaltyEur), 0);
+  const totalFuelConsumed = activeRows.reduce(
+    (sum, row) =>
+      sum +
+      numberOrZero(row.fuel1ConsumptionMt) +
+      numberOrZero(row.fuel2ConsumptionMt) +
+      numberOrZero(row.bioFuelConsumptionMt),
+    0
+  );
+  const totalNumerator = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuWtwEmissionsG), 0);
+  const totalDenominator = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuDenomStep1Mj), 0);
+  const totalEnergy = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuEnergyStep2Mj), 0);
+  const averageIntensity = totalDenominator > 0 ? totalNumerator / totalDenominator : 0;
+  const target = stateStore.derived.parameterValues.fueleuTarget;
+  const complianceBalance = totalDenominator > 0 ? (target - averageIntensity) * totalEnergy / 1_000_000 : 0;
+  const voyageRows = activeRows.filter((row) => row.type === "Voyage");
+  const portStayRows = activeRows.filter((row) => row.type === "Port Stay");
+
+  const byVessel = [...new Set(activeRows.map((row) => row.vesselName).filter(Boolean))]
+    .map((vesselName) => {
+      const rows = activeRows.filter((row) => row.vesselName === vesselName);
+      return {
+        vesselName,
+        euasRequired: rows.reduce((sum, row) => sum + numberOrZero(row.euasRequiredT), 0),
+        euasCost: rows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0),
+        averageIntensity: (() => {
+          const numerator = rows.reduce((sum, row) => sum + numberOrZero(row.fuelEuWtwEmissionsG), 0);
+          const denominator = rows.reduce((sum, row) => sum + numberOrZero(row.fuelEuDenomStep1Mj), 0);
+          return denominator > 0 ? numerator / denominator : 0;
+        })(),
+      };
+    })
+    .sort((a, b) => b.euasRequired - a.euasRequired);
+
+  return {
+    totalEuasRequired,
+    totalEuasCost,
+    complianceBalance,
+    totalPenalty,
+    averageIntensity,
+    totalFuelConsumed,
+    voyageRows,
+    portStayRows,
+    byVessel,
+  };
+}
+
+function renderKpis() {
+  const dashboard = computeFilteredDashboard(getActiveRows());
+  const cards = [
+    {
+      label: "Total EUAs required",
+      value: `${formatNumber(dashboard.totalEuasRequired, 1)}`,
+      detail: "t CO2eq",
+      note: "Click charts for record-level rows",
+      tone: "risk",
+    },
+    {
+      label: "Total EUA cost",
+      value: `${formatCurrency(dashboard.totalEuasCost)}`,
+      detail: `@ EUR ${formatInteger(stateStore.derived.parameterValues.euaPrice)} / EUA`,
+      note: "Filtered by current vessel",
+      tone: "warn",
+    },
+    {
+      label: "Compliance balance",
+      value: `${dashboard.complianceBalance >= 0 ? "+" : ""}${formatNumber(dashboard.complianceBalance, 1)}`,
+      detail: "t CO2eq surplus / deficit",
+      note: "Based on FuelEU target",
+      tone: dashboard.complianceBalance >= 0 ? "good" : "risk",
+    },
+    {
+      label: "FuelEU penalty",
+      value: `${formatCurrency(dashboard.totalPenalty)}`,
+      detail: dashboard.totalPenalty > 0 ? "Penalty triggered by deficits" : "No penalty due",
+      note: "Calculator-derived total",
+      tone: dashboard.totalPenalty > 0 ? "risk" : "good",
+    },
+    {
+      label: "Avg GHG intensity",
+      value: `${formatNumber(dashboard.averageIntensity, 2)}`,
+      detail: `g/MJ vs ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 2)} target`,
+      note: "Voyage and port-stay weighted",
+      tone: dashboard.averageIntensity <= stateStore.derived.parameterValues.fueleuTarget ? "good" : "warn",
+    },
+    {
+      label: "Total fuel consumed",
+      value: `${formatNumber(dashboard.totalFuelConsumed, 1)}`,
+      detail: "MT all fuel types",
+      note: "Fossil plus biofuel",
+      tone: "neutral",
+    },
+    {
+      label: "Voyage records",
+      value: `${formatInteger(dashboard.voyageRows.length)}`,
+      detail: "Click charts to view voyages",
+      note: "Current filter only",
+      tone: "neutral",
+    },
+    {
+      label: "Port stay records",
+      value: `${formatInteger(dashboard.portStayRows.length)}`,
+      detail: "Click charts to view port stays",
+      note: "Current filter only",
+      tone: "neutral",
+    },
+  ];
+
+  elements.kpiGrid.innerHTML = cards
+    .map(
+      (card) => `
+        <article class="kpi-card tone-${card.tone}">
+          <div class="kpi-label">${card.label}</div>
+          <div class="kpi-value">${card.value}</div>
+          <div class="kpi-detail">${card.detail}</div>
+          <div class="kpi-note">${card.note}</div>
+        </article>
+      `
+    )
+    .join("");
+}
+
 function toneClass(value) {
   if (value > 0) return "tag-good";
   if (value < 0) return "tag-risk";
   return "muted";
 }
 
-function renderDashboard() {
-  const topRows = stateStore.derived.dashboard.topPenaltyRows;
-  const vesselRows = stateStore.derived.dashboard.topExposureVessels;
+function openDrilldown(title, subtitle, columns, rows) {
+  stateStore.ui.drilldown = { title, subtitle, columns, rows };
+  render();
+}
+
+function closeDrilldown() {
+  stateStore.ui.drilldown = null;
+  render();
+}
+
+function renderDrilldownPane() {
+  const drilldown = stateStore.ui.drilldown;
+  if (!drilldown) {
+    return `
+      <aside class="drilldown-pane empty">
+        <div class="drilldown-empty">
+          <p class="eyebrow">Chart Drilldown</p>
+          <h3>Click any chart</h3>
+          <p class="helper-text">The selected bar, point, or segment will open its related records here as a readable table.</p>
+        </div>
+      </aside>
+    `;
+  }
+
   return `
-    <section class="dashboard-grid">
-      <article class="chart-card">
-        <div class="table-head">
-          <div>
-            <p class="eyebrow">Exposure by Vessel</p>
-            <h3>Top ETS Cost Contributors</h3>
-          </div>
-        </div>
-        <div class="chart-canvas-wrap">
-          <canvas id="vesselExposureChart"></canvas>
-        </div>
-      </article>
-      <article class="chart-card">
-        <div class="table-head">
-          <div>
-            <p class="eyebrow">Fuel Mix</p>
-            <h3>Energy Share by Fuel</h3>
-          </div>
-        </div>
-        <div class="chart-canvas-wrap">
-          <canvas id="fuelMixChart"></canvas>
-        </div>
-      </article>
-    </section>
-
-    <section class="dashboard-grid">
-      <article class="table-card">
-        <div class="table-head">
-          <div>
-            <p class="eyebrow">Calculator Hotspots</p>
-            <h3>Highest FuelEU Penalty Rows</h3>
-          </div>
-          <span class="chip">${topRows.length} rows</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Record</th>
-                <th>Vessel</th>
-                <th>Route</th>
-                <th>Scope</th>
-                <th>Balance (t)</th>
-                <th>Penalty</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${topRows
-                .map(
-                  (row) => `
-                    <tr>
-                      <td>${row.recordId || "-"}</td>
-                      <td>${row.vesselName || "-"}</td>
-                      <td>${row.route}</td>
-                      <td>${formatPercent(row.scopePercent)}</td>
-                      <td class="${toneClass(row.complianceBalanceT)}">${formatNumber(row.complianceBalanceT, 3)}</td>
-                      <td class="number-cell">${formatCurrency(row.fuelEuPenaltyEur)}</td>
-                    </tr>
-                  `
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </article>
-
-      <article class="card">
-        <div class="table-head">
-          <div>
-            <p class="eyebrow">Workbook Logic</p>
-            <h3>What Drives These KPIs</h3>
-          </div>
-        </div>
-        <ul class="insight-list">
-          <li>Calculator rows auto-classify into Voyage or Port Stay from the From and To port codes.</li>
-          <li>Fleet lookups resolve vessel name, type, flag, GT, NT, and DWT from the Fleet DB using the IMO number.</li>
-          <li>Port DB rules determine EU or EEA scope, outermost-region handling, and route percentage for both ETS and FuelEU.</li>
-          <li>FuelEU intensity, balance, and penalty update from fuel factors, wind factor, sustainability factor, and OPS electricity.</li>
-          <li>The dashboard totals are recomputed every time any sheet data is edited, so the workbook behaves like an application.</li>
-        </ul>
-      </article>
-    </section>
-
-    <section class="table-card">
+    <aside class="drilldown-pane">
       <div class="table-head">
         <div>
-          <p class="eyebrow">Vessel Rollup</p>
-          <h3>Top Vessel Exposure Summary</h3>
+          <p class="eyebrow">Chart Drilldown</p>
+          <h3>${drilldown.title}</h3>
+          <p class="helper-text">${drilldown.subtitle || ""}</p>
         </div>
-        <span class="chip">${vesselRows.length} vessels</span>
+        <button class="icon-button compact" type="button" data-action="close-drilldown" title="Close drilldown">✕</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>Vessel</th>
-              <th>Type</th>
-              <th>Voyages</th>
-              <th>EUAs Required</th>
-              <th>ETS Cost</th>
-              <th>FuelEU Balance</th>
-              <th>Status</th>
-            </tr>
+            <tr>${drilldown.columns.map((column) => `<th>${column}</th>`).join("")}</tr>
           </thead>
           <tbody>
-            ${vesselRows
+            ${drilldown.rows
               .map(
                 (row) => `
-                  <tr>
-                    <td>${row.vesselName}</td>
-                    <td>${row.shipType}</td>
-                    <td class="number-cell">${formatInteger(row.voyageCount)}</td>
-                    <td class="number-cell">${formatNumber(row.totalEuasRequired, 2)}</td>
-                    <td class="number-cell">${formatCurrency(row.totalEuasCost)}</td>
-                    <td class="${toneClass(row.totalComplianceBalance)}">${formatNumber(row.totalComplianceBalance, 3)}</td>
-                    <td>${row.status}</td>
-                  </tr>
+                  <tr>${row.map((value) => `<td>${value}</td>`).join("")}</tr>
                 `
               )
-              .join("")}
+              .join("") || `<tr><td colspan="${drilldown.columns.length}">No records</td></tr>`}
           </tbody>
         </table>
       </div>
+    </aside>
+  `;
+}
+
+function renderDashboard() {
+  return `
+    <section class="analytics-header">
+      <div class="analytics-title">
+        <h2>Visual Analytics</h2>
+        <span class="chip">4 charts</span>
+      </div>
+      <p class="helper-text">Click any chart element to open its underlying table in the right pane.</p>
+    </section>
+
+    <section class="dashboard-layout">
+      <div class="dashboard-main">
+        <div class="chart-grid">
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Vessel</p>
+                <h3>EUAs Required by Vessel (t CO2eq)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="vesselEuaChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Voyage</p>
+                <h3>GHG Intensity Attained vs Target (g/MJ)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="voyageGhgChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Voyage</p>
+                <h3>EUAs Required by Voyage (t CO2eq)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="voyageEuaChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">Cost Split</p>
+                <h3>EUA Cost Split — Voyage vs Port Stay</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="costSplitChart"></canvas></div>
+          </article>
+        </div>
+      </div>
+      ${renderDrilldownPane()}
     </section>
   `;
 }
 
 function renderDashboardCharts() {
-  const vesselRows = stateStore.derived.dashboard.topExposureVessels;
-  const fuelMixEntries = Object.entries(stateStore.derived.dashboard.fuelMix);
+  destroyCharts();
+  const activeRows = getActiveRows();
+  const dashboard = computeFilteredDashboard(activeRows);
+  const voyageRows = dashboard.voyageRows.filter((row) => row.attainedGhgIntensity !== null);
 
-  Object.values(stateStore.charts).forEach((chart) => chart.destroy());
-  stateStore.charts = {};
+  const vesselCanvas = document.getElementById("vesselEuaChart");
+  const ghgCanvas = document.getElementById("voyageGhgChart");
+  const voyageEuaCanvas = document.getElementById("voyageEuaChart");
+  const costSplitCanvas = document.getElementById("costSplitChart");
 
-  const vesselCanvas = document.getElementById("vesselExposureChart");
-  const fuelCanvas = document.getElementById("fuelMixChart");
-
-  if (vesselCanvas && vesselRows.length) {
-    stateStore.charts.vessel = new Chart(vesselCanvas, {
+  if (vesselCanvas) {
+    stateStore.charts.vesselEua = new Chart(vesselCanvas, {
       type: "bar",
       data: {
-        labels: vesselRows.map((row) => row.vesselName),
+        labels: dashboard.byVessel.map((row) => row.vesselName),
         datasets: [
           {
-            label: "ETS Cost (EUR)",
-            data: vesselRows.map((row) => row.totalEuasCost),
-            backgroundColor: "#214b79",
+            label: "EUAs required",
+            data: dashboard.byVessel.map((row) => row.euasRequired),
+            backgroundColor: "#4288d6",
             borderRadius: 8,
           },
         ],
       },
       options: {
         maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-        },
-        scales: {
-          y: {
-            ticks: { callback: (value) => formatInteger(value) },
-          },
+        plugins: { legend: { display: false } },
+        onClick: (_, elementsClicked) => {
+          if (!elementsClicked.length) return;
+          const index = elementsClicked[0].index;
+          const vesselName = dashboard.byVessel[index]?.vesselName;
+          const rows = activeRows.filter((row) => row.vesselName === vesselName);
+          openDrilldown(
+            `EUAs for ${vesselName}`,
+            "Voyage and port stay rows contributing to the vessel total.",
+            ["Record", "Type", "Route", "EUAs Required", "ETS Cost", "GHG Intensity"],
+            rows.map((row) => [
+              row.recordId,
+              row.type,
+              row.route,
+              formatNumber(row.euasRequiredT, 3),
+              formatCurrency(row.euasCostEur),
+              formatNumber(row.attainedGhgIntensity, 3),
+            ])
+          );
         },
       },
     });
   }
 
-  if (fuelCanvas && fuelMixEntries.length) {
-    stateStore.charts.fuel = new Chart(fuelCanvas, {
-      type: "doughnut",
+  if (ghgCanvas) {
+    stateStore.charts.voyageGhg = new Chart(ghgCanvas, {
+      type: "line",
       data: {
-        labels: fuelMixEntries.map(([label]) => label),
+        labels: voyageRows.map((row) => row.recordId),
         datasets: [
           {
-            data: fuelMixEntries.map(([, value]) => value),
-            backgroundColor: ["#214b79", "#ee8c2b", "#2c8c6c", "#9d6cd5", "#7f99b2", "#e1b641"],
+            label: "Attained",
+            data: voyageRows.map((row) => row.attainedGhgIntensity),
+            borderColor: "#4288d6",
+            backgroundColor: "#4288d6",
+            pointRadius: 4,
+            tension: 0.2,
+          },
+          {
+            label: `Target ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 2)}`,
+            data: voyageRows.map(() => stateStore.derived.parameterValues.fueleuTarget),
+            borderColor: "#cf4e3a",
+            borderDash: [6, 6],
+            pointRadius: 0,
+            tension: 0,
+          },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        onClick: (_, elementsClicked) => {
+          if (!elementsClicked.length) return;
+          const index = elementsClicked[0].index;
+          const row = voyageRows[index];
+          openDrilldown(
+            `GHG Intensity for ${row.recordId}`,
+            row.route,
+            ["Record", "Vessel", "Attained", "Target", "Compliance Balance", "FuelEU Penalty"],
+            [[
+              row.recordId,
+              row.vesselName,
+              formatNumber(row.attainedGhgIntensity, 3),
+              formatNumber(row.targetGhgIntensity, 3),
+              formatNumber(row.complianceBalanceT, 3),
+              formatCurrency(row.fuelEuPenaltyEur),
+            ]]
+          );
+        },
+      },
+    });
+  }
+
+  if (voyageEuaCanvas) {
+    stateStore.charts.voyageEua = new Chart(voyageEuaCanvas, {
+      type: "bar",
+      data: {
+        labels: voyageRows.map((row) => row.recordId),
+        datasets: [
+          {
+            label: "EUAs required",
+            data: voyageRows.map((row) => row.euasRequiredT),
+            backgroundColor: voyageRows.map((row) => (row.scopePercent === 1 ? "#178c18" : "#78a641")),
+            borderRadius: 6,
+          },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        onClick: (_, elementsClicked) => {
+          if (!elementsClicked.length) return;
+          const index = elementsClicked[0].index;
+          const row = voyageRows[index];
+          openDrilldown(
+            `Voyage EUA Requirement ${row.recordId}`,
+            row.route,
+            ["Vessel", "Scope", "ETS CO2eq", "EUAs Required", "ETS Cost", "Fuel Consumed (MT)"],
+            [[
+              row.vesselName,
+              formatPercent(row.scopePercent),
+              formatNumber(row.etsInScopeCo2eqT, 3),
+              formatNumber(row.euasRequiredT, 3),
+              formatCurrency(row.euasCostEur),
+              formatNumber(numberOrZero(row.fuel1ConsumptionMt) + numberOrZero(row.fuel2ConsumptionMt) + numberOrZero(row.bioFuelConsumptionMt), 2),
+            ]]
+          );
+        },
+      },
+    });
+  }
+
+  if (costSplitCanvas) {
+    const voyageCost = dashboard.voyageRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
+    const portStayCost = dashboard.portStayRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
+    stateStore.charts.costSplit = new Chart(costSplitCanvas, {
+      type: "doughnut",
+      data: {
+        labels: ["Voyages", "Port stays"],
+        datasets: [
+          {
+            data: [voyageCost, portStayCost],
+            backgroundColor: ["#4288d6", "#178c18"],
             borderWidth: 0,
           },
         ],
       },
       options: {
         maintainAspectRatio: false,
-        plugins: {
-          legend: { position: "bottom" },
+        plugins: { legend: { position: "bottom" } },
+        onClick: (_, elementsClicked) => {
+          if (!elementsClicked.length) return;
+          const index = elementsClicked[0].index;
+          const label = index === 0 ? "Voyages" : "Port stays";
+          const rows = index === 0 ? dashboard.voyageRows : dashboard.portStayRows;
+          openDrilldown(
+            `${label} cost split`,
+            "Rows included in the selected cost segment.",
+            ["Record", "Vessel", "Route", "Type", "EUAs Required", "ETS Cost"],
+            rows.map((row) => [
+              row.recordId,
+              row.vesselName,
+              row.route,
+              row.type,
+              formatNumber(row.euasRequiredT, 3),
+              formatCurrency(row.euasCostEur),
+            ])
+          );
         },
       },
     });
   }
 }
 
+function ensureCalculatorSelection() {
+  const activeRows = getActiveRows();
+  const rows = activeRows.length ? activeRows : stateStore.derived.calculatorRows;
+  const selected = rows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
+  if (selected) return selected;
+  const fallback = rows.find((row) => row.recordId) || rows[0];
+  stateStore.ui.calculatorSelectedId = fallback?.id || null;
+  return fallback || null;
+}
+
 function renderCalculatorField(field, row) {
   const value = row[field.key] ?? "";
-  const common = [
-    `class="calculator-input input-orange"`,
-    `data-calc-field="${field.key}"`,
-    field.list ? `list="${field.list}"` : "",
-    field.step ? `step="${field.step}"` : "",
-  ].filter(Boolean).join(" ");
-
   return `
     <div class="field">
       <label for="calc-${field.key}">${field.label}</label>
-      <input id="calc-${field.key}" type="${field.type}" ${common} value="${value}">
+      <input
+        id="calc-${field.key}"
+        class="calculator-input input-orange"
+        data-calc-field="${field.key}"
+        type="${field.type}"
+        value="${value}"
+        ${field.list ? `list="${field.list}"` : ""}
+        ${field.step ? `step="${field.step}"` : ""}
+      >
       ${field.hint ? `<div class="helper-text">${field.hint}</div>` : ""}
     </div>
   `;
@@ -475,8 +647,7 @@ function renderCalculator() {
   const selectedDerived = ensureCalculatorSelection();
   const selectedInput = stateStore.state.calculatorRows.find((row) => row.id === selectedDerived?.id) || blankCalculatorRow();
   const searchTerm = lower(stateStore.ui.calculatorSearch);
-  const activeRows = stateStore.derived.calculatorRows.filter((row) => row.recordId);
-  const filteredRows = activeRows.filter((row) => {
+  const filteredRows = getActiveRows().filter((row) => {
     if (!searchTerm) return true;
     return [
       row.recordId,
@@ -492,25 +663,26 @@ function renderCalculator() {
       .filter(Boolean)
       .some((value) => lower(value).includes(searchTerm));
   });
-  const visibleRows = filteredRows.slice(0, 50);
+  const visibleRows = filteredRows.slice(0, 60);
 
   return `
     <section class="calculator-shell">
       <div class="calculator-toolbar">
-        <div>
-          <p class="eyebrow">Row Search</p>
+        <div class="calculator-toolbar-copy">
+          <h2>Calculator</h2>
+          <p class="helper-text">Enter route and fuel data in orange fields. The blue output panel recalculates EU ETS and FuelEU results instantly.</p>
+        </div>
+        <div class="calculator-actions">
           <input
             class="search-input"
             type="search"
             data-action="calculator-search"
             value="${stateStore.ui.calculatorSearch}"
-            placeholder="Search by vessel, route, port code, or fuel"
+            placeholder="Search records, routes, or fuels"
           >
-        </div>
-        <div class="calculator-actions">
           <button class="inline-button" type="button" data-action="add-calculator-row">Add row</button>
-          <button class="inline-button" type="button" data-action="duplicate-calculator-row">Duplicate selected</button>
-          <button class="danger-button" type="button" data-action="delete-calculator-row">Delete selected</button>
+          <button class="inline-button" type="button" data-action="duplicate-calculator-row">Duplicate</button>
+          <button class="danger-button" type="button" data-action="delete-calculator-row">Delete</button>
         </div>
       </div>
 
@@ -518,10 +690,10 @@ function renderCalculator() {
         <article class="calculator-form-card">
           <div class="table-head">
             <div>
-              <p class="eyebrow">Input Form</p>
-              <h3>Editable Orange Fields</h3>
+              <p class="eyebrow">Operator Inputs</p>
+              <h3>${selectedDerived?.recordId || "New scenario row"}</h3>
             </div>
-            <span class="chip">${selectedDerived?.recordId || "Draft row"}</span>
+            <span class="chip">${selectedDerived?.vesselName || "Unassigned vessel"}</span>
           </div>
           ${CALCULATOR_FIELD_GROUPS.map(
             (group) => `
@@ -539,44 +711,40 @@ function renderCalculator() {
           <div class="table-head">
             <div>
               <p class="eyebrow">Calculated Output</p>
-              <h3>Blue Read-Only Result Cards</h3>
+              <h3>${selectedDerived?.route || "Awaiting route classification"}</h3>
             </div>
-            <span class="chip">${selectedDerived?.type || "Awaiting route"}</span>
+            <span class="chip">${selectedDerived?.type || "-"}</span>
           </div>
 
           <div class="record-summary">
-            <div class="record-chip"><strong>${selectedDerived?.vesselName || "No vessel yet"}</strong><span>${selectedDerived?.shipType || "Unresolved fleet lookup"}</span></div>
-            <div class="record-chip"><strong>${selectedDerived?.route || "Route will appear here"}</strong><span>${selectedDerived?.scopeNote || "Scope note will appear here"}</span></div>
+            <div class="record-chip"><strong>${selectedDerived?.vesselName || "-"}</strong><span>${selectedDerived?.shipType || "Resolve IMO to auto-fill vessel data"}</span></div>
+            <div class="record-chip"><strong>${selectedDerived?.scopeNote || "Scope note pending"}</strong><span>${selectedDerived?.flagState || "No flag yet"}</span></div>
           </div>
 
           <div class="output-grid">
-            <div class="output-card"><span class="output-label">Type</span><strong class="output-value">${selectedDerived?.type || "-"}</strong></div>
+            <div class="output-card"><span class="output-label">EUAs Required</span><strong class="output-value">${formatNumber(selectedDerived?.euasRequiredT, 3)}</strong></div>
+            <div class="output-card"><span class="output-label">ETS Cost</span><strong class="output-value">${formatCurrency(selectedDerived?.euasCostEur)}</strong></div>
+            <div class="output-card"><span class="output-label">GHG Intensity</span><strong class="output-value">${formatNumber(selectedDerived?.attainedGhgIntensity, 3)}</strong></div>
+            <div class="output-card"><span class="output-label">Target Intensity</span><strong class="output-value">${formatNumber(selectedDerived?.targetGhgIntensity, 3)}</strong></div>
+            <div class="output-card"><span class="output-label">Compliance Balance</span><strong class="output-value ${toneClass(selectedDerived?.complianceBalanceT || 0)}">${formatNumber(selectedDerived?.complianceBalanceT, 3)}</strong></div>
+            <div class="output-card"><span class="output-label">FuelEU Penalty</span><strong class="output-value">${formatCurrency(selectedDerived?.fuelEuPenaltyEur)}</strong></div>
+            <div class="output-card"><span class="output-label">ETS CO2eq</span><strong class="output-value">${formatNumber(selectedDerived?.etsInScopeCo2eqT, 3)}</strong></div>
             <div class="output-card"><span class="output-label">Scope</span><strong class="output-value">${formatPercent(selectedDerived?.scopePercent || 0)}</strong></div>
-            <div class="output-card"><span class="output-label">Vessel Name</span><strong class="output-value">${selectedDerived?.vesselName || "-"}</strong></div>
-            <div class="output-card"><span class="output-label">Flag State</span><strong class="output-value">${selectedDerived?.flagState || "-"}</strong></div>
-            <div class="output-card"><span class="output-label">Total Energy (MJ)</span><strong class="output-value">${formatInteger(selectedDerived?.totalEnergyMj || 0)}</strong></div>
-            <div class="output-card"><span class="output-label">In-Scope Energy (MJ)</span><strong class="output-value">${formatInteger(selectedDerived?.inScopeEnergyMj || 0)}</strong></div>
-            <div class="output-card"><span class="output-label">ETS CO2eq (t)</span><strong class="output-value">${formatNumber(selectedDerived?.etsInScopeCo2eqT || 0, 3)}</strong></div>
-            <div class="output-card"><span class="output-label">EUAs Required</span><strong class="output-value">${formatNumber(selectedDerived?.euasRequiredT || 0, 3)}</strong></div>
-            <div class="output-card"><span class="output-label">ETS Cost</span><strong class="output-value">${formatCurrency(selectedDerived?.euasCostEur || 0)}</strong></div>
-            <div class="output-card"><span class="output-label">Attained GHG Intensity</span><strong class="output-value">${formatNumber(selectedDerived?.attainedGhgIntensity || 0, 3)}</strong></div>
-            <div class="output-card"><span class="output-label">Compliance Balance</span><strong class="output-value ${toneClass(selectedDerived?.complianceBalanceT || 0)}">${formatNumber(selectedDerived?.complianceBalanceT || 0, 3)}</strong></div>
-            <div class="output-card"><span class="output-label">FuelEU Penalty</span><strong class="output-value">${formatCurrency(selectedDerived?.fuelEuPenaltyEur || 0)}</strong></div>
+            <div class="output-card"><span class="output-label">Fuel Consumed</span><strong class="output-value">${formatNumber(numberOrZero(selectedDerived?.fuel1ConsumptionMt) + numberOrZero(selectedDerived?.fuel2ConsumptionMt) + numberOrZero(selectedDerived?.bioFuelConsumptionMt), 2)} MT</strong></div>
+            <div class="output-card"><span class="output-label">Transport Work</span><strong class="output-value">${formatInteger(selectedDerived?.transportWork || 0)}</strong></div>
+            <div class="output-card"><span class="output-label">In-Scope Energy</span><strong class="output-value">${formatInteger(selectedDerived?.inScopeEnergyMj || 0)} MJ</strong></div>
+            <div class="output-card"><span class="output-label">EEOI</span><strong class="output-value">${formatNumber(selectedDerived?.eeoi, 3)}</strong></div>
           </div>
-
-          <p class="helper-text">
-            This panel is intentionally user-readable. The spreadsheet formulas still run in the application logic, but the output is shown as operations-ready values instead of raw workbook JSON.
-          </p>
         </article>
       </div>
 
       <article class="table-card">
         <div class="table-head">
           <div>
-            <p class="eyebrow">Calculator Table</p>
-            <h3>Rows in the Workbook Model</h3>
+            <p class="eyebrow">Scenario Table</p>
+            <h3>Filtered rows${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
           </div>
-          <span class="chip">${filteredRows.length} matching rows${filteredRows.length > 50 ? " · showing first 50" : ""}</span>
+          <span class="chip">${filteredRows.length} rows${filteredRows.length > 60 ? " · showing first 60" : ""}</span>
         </div>
         <div class="table-wrap">
           <table>
@@ -586,10 +754,9 @@ function renderCalculator() {
                 <th>Vessel</th>
                 <th>Route</th>
                 <th>Type</th>
-                <th>Scope</th>
                 <th>EUAs</th>
-                <th>ETS Cost</th>
-                <th>FuelEU Balance</th>
+                <th>GHG Intensity</th>
+                <th>Balance</th>
                 <th>Penalty</th>
               </tr>
             </thead>
@@ -598,15 +765,14 @@ function renderCalculator() {
                 .map(
                   (row) => `
                     <tr class="${row.id === stateStore.ui.calculatorSelectedId ? "selected-row" : ""}" data-action="select-calculator-row" data-row-id="${row.id}">
-                      <td>${row.recordId || "-"}</td>
-                      <td>${row.vesselName || "-"}</td>
+                      <td>${row.recordId}</td>
+                      <td>${row.vesselName}</td>
                       <td>${row.route}</td>
-                      <td>${row.type || "-"}</td>
-                      <td>${formatPercent(row.scopePercent || 0)}</td>
-                      <td class="number-cell">${formatNumber(row.euasRequiredT || 0, 3)}</td>
-                      <td class="number-cell">${formatCurrency(row.euasCostEur || 0)}</td>
-                      <td class="${toneClass(row.complianceBalanceT || 0)}">${formatNumber(row.complianceBalanceT || 0, 3)}</td>
-                      <td class="number-cell">${formatCurrency(row.fuelEuPenaltyEur || 0)}</td>
+                      <td>${row.type}</td>
+                      <td class="number-cell">${formatNumber(row.euasRequiredT, 3)}</td>
+                      <td class="number-cell">${formatNumber(row.attainedGhgIntensity, 3)}</td>
+                      <td class="${toneClass(row.complianceBalanceT || 0)}">${formatNumber(row.complianceBalanceT, 3)}</td>
+                      <td class="number-cell">${formatCurrency(row.fuelEuPenaltyEur)}</td>
                     </tr>
                   `
                 )
@@ -619,56 +785,6 @@ function renderCalculator() {
   `;
 }
 
-function renderVesselSummary() {
-  return `
-    <section class="table-card">
-      <div class="table-head">
-        <div>
-          <p class="eyebrow">Computed Summary Sheet</p>
-          <h3>Per-Vessel Rollup</h3>
-        </div>
-        <span class="chip">${stateStore.derived.vesselSummary.length} vessels</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>IMO</th>
-              <th>Vessel</th>
-              <th>Type</th>
-              <th>Flag</th>
-              <th>Voyages</th>
-              <th>EUAs Required</th>
-              <th>ETS Cost</th>
-              <th>FuelEU Balance</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stateStore.derived.vesselSummary
-              .map(
-                (row) => `
-                  <tr>
-                    <td>${row.imoNo}</td>
-                    <td>${row.vesselName}</td>
-                    <td>${row.shipType}</td>
-                    <td>${row.flag}</td>
-                    <td class="number-cell">${formatInteger(row.voyageCount)}</td>
-                    <td class="number-cell">${formatNumber(row.totalEuasRequired, 2)}</td>
-                    <td class="number-cell">${formatCurrency(row.totalEuasCost)}</td>
-                    <td class="${toneClass(row.totalComplianceBalance)}">${formatNumber(row.totalComplianceBalance, 3)}</td>
-                    <td>${row.status}</td>
-                  </tr>
-                `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
-}
-
 function getSheetRowsForDisplay(sheetKey) {
   if (sheetKey === "fuelReference") {
     return stateStore.derived.fuelReference;
@@ -676,120 +792,170 @@ function getSheetRowsForDisplay(sheetKey) {
   return getCollection(sheetKey) || [];
 }
 
-function renderEditorSheet(sheetKey) {
+function renderLibraryTabs() {
+  elements.libraryTabs.innerHTML = REFERENCE_SHEETS.map(
+    (sheet) => `
+      <button
+        class="sheet-tab ${stateStore.ui.librarySheet === sheet.key ? "active" : ""}"
+        type="button"
+        data-action="select-library-sheet"
+        data-sheet="${sheet.key}"
+      >
+        ${sheet.label}
+      </button>
+    `
+  ).join("");
+}
+
+function renderLibraryContent() {
+  const sheetKey = stateStore.ui.librarySheet;
   const allRows = getSheetRowsForDisplay(sheetKey);
-  const search = lower(stateStore.ui.editorSearch);
+  const search = lower(stateStore.ui.librarySearch);
   const filteredRows = allRows.filter((row) => {
     if (!search) return true;
     return Object.values(row).some((value) => lower(value).includes(search));
   });
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
-  if (stateStore.ui.editorPage > pageCount) {
-    stateStore.ui.editorPage = pageCount;
+  if (stateStore.ui.libraryPage > pageCount) {
+    stateStore.ui.libraryPage = pageCount;
   }
-  const startIndex = (stateStore.ui.editorPage - 1) * PAGE_SIZE;
-  const pageRows = filteredRows.slice(startIndex, startIndex + PAGE_SIZE);
+  const pageRows = filteredRows.slice((stateStore.ui.libraryPage - 1) * PAGE_SIZE, stateStore.ui.libraryPage * PAGE_SIZE);
   const columns = SHEET_COLUMNS[sheetKey];
-  const visibleColumns = columns.slice(0, Math.min(columns.length, 6));
+  const visibleColumns = columns.slice(0, Math.min(columns.length, 5));
 
-  return `
-    <section class="editor-grid">
-      <div class="editor-toolbar">
+  elements.libraryContent.innerHTML = `
+    <div class="library-toolbar">
+      <div>
+        <h3>${REFERENCE_SHEETS.find((sheet) => sheet.key === sheetKey)?.label || "Library"}</h3>
+        <p class="helper-text">Hidden from the main navigation, but still editable here whenever you need to adjust the calculation library.</p>
+      </div>
+      <div class="library-toolbar-actions">
         <input
           class="search-input"
           type="search"
-          data-action="editor-search"
-          value="${stateStore.ui.editorSearch}"
-          placeholder="Search this sheet"
+          value="${stateStore.ui.librarySearch}"
+          data-action="library-search"
+          placeholder="Search this library sheet"
         >
-        <div class="toolbar-actions">
-          <button class="inline-button" type="button" data-action="open-row-editor" data-sheet="${sheetKey}">Add row</button>
-          <span class="page-label">${filteredRows.length} rows</span>
-        </div>
+        <button class="inline-button" type="button" data-action="open-row-editor" data-sheet="${sheetKey}">Add row</button>
       </div>
+    </div>
 
-      <article class="table-card">
-        <div class="table-head">
-          <div>
-            <p class="eyebrow">Editable Sheet</p>
-            <h3>${viewMeta[sheetKey].title}</h3>
-          </div>
-          <div class="pagination-row">
-            <button class="inline-button" type="button" data-action="editor-page-prev">Previous</button>
-            <span class="page-label">Page ${stateStore.ui.editorPage} of ${pageCount}</span>
-            <button class="inline-button" type="button" data-action="editor-page-next">Next</button>
-          </div>
-        </div>
-        ${
-          pageRows.length
-            ? `
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      ${visibleColumns.map((column) => `<th>${column}</th>`).join("")}
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${pageRows
-                      .map(
-                        (row) => `
-                          <tr>
-                            ${visibleColumns.map((column) => `<td>${row[column] ?? "-"}</td>`).join("")}
-                            <td>
-                              <div class="toolbar-actions">
-                                <button class="inline-button" type="button" data-action="open-row-editor" data-sheet="${sheetKey}" data-row-id="${row.id}">Edit</button>
-                                <button class="danger-button" type="button" data-action="delete-sheet-row" data-sheet="${sheetKey}" data-row-id="${row.id}">Delete</button>
-                              </div>
-                            </td>
-                          </tr>
-                        `
-                      )
-                      .join("")}
-                  </tbody>
-                </table>
-              </div>
-            `
-            : `<div class="empty-state">No rows match the current search.</div>`
-        }
-      </article>
-    </section>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            ${visibleColumns.map((column) => `<th>${column}</th>`).join("")}
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${pageRows
+            .map(
+              (row) => `
+                <tr>
+                  ${visibleColumns.map((column) => `<td>${row[column] ?? "-"}</td>`).join("")}
+                  <td>
+                    <div class="toolbar-actions">
+                      <button class="inline-button" type="button" data-action="open-row-editor" data-sheet="${sheetKey}" data-row-id="${row.id}">Edit</button>
+                      <button class="danger-button" type="button" data-action="delete-sheet-row" data-sheet="${sheetKey}" data-row-id="${row.id}">Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              `
+            )
+            .join("") || `<tr><td colspan="${visibleColumns.length + 1}">No rows match the current search.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination-row">
+      <button class="inline-button" type="button" data-action="library-page-prev">Previous</button>
+      <span class="page-label">Page ${stateStore.ui.libraryPage} of ${pageCount}</span>
+      <button class="inline-button" type="button" data-action="library-page-next">Next</button>
+    </div>
   `;
 }
 
 function renderContent() {
-  const sheetKey = stateStore.ui.activeSheet;
-  const meta = viewMeta[sheetKey];
-  elements.viewTitle.textContent = meta.title;
-  elements.viewDescription.textContent = meta.description;
-  elements.sourceWorkbook.textContent = stateStore.state.meta.sourceWorkbook;
-
-  if (sheetKey === "dashboard") {
+  destroyCharts();
+  if (stateStore.ui.activeView === "dashboard") {
     elements.contentView.innerHTML = renderDashboard();
     renderDashboardCharts();
     return;
   }
 
-  if (sheetKey === "calculator") {
-    elements.contentView.innerHTML = renderCalculator();
-    return;
-  }
+  elements.contentView.innerHTML = renderCalculator();
+}
 
-  if (sheetKey === "vesselSummary") {
-    elements.contentView.innerHTML = renderVesselSummary();
-    return;
-  }
-
-  elements.contentView.innerHTML = renderEditorSheet(sheetKey);
+function renderLibraryDrawer() {
+  elements.libraryDrawer.classList.toggle("open", stateStore.ui.libraryOpen);
+  elements.libraryBackdrop.classList.toggle("open", stateStore.ui.libraryOpen);
+  renderLibraryTabs();
+  renderLibraryContent();
 }
 
 function render() {
-  renderMetaGrid();
-  renderSheetTabs();
+  renderViewTabs();
+  renderVesselFilter();
   renderKpis();
   buildDataLists();
   renderContent();
+  renderLibraryDrawer();
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function downloadText(filename, content, type = "text/plain") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportFilteredData() {
+  const activeRows = getActiveRows();
+  const vesselSummary = computeFilteredDashboard(activeRows).byVessel;
+  const slug = stateStore.ui.vesselFilter === "all" ? "all-vessels" : stateStore.ui.vesselFilter.toLowerCase().replaceAll(/\s+/g, "-");
+
+  const calculatorHeaders = ["Record", "Vessel", "Route", "Type", "EUAs Required", "ETS Cost", "GHG Intensity", "Compliance Balance", "FuelEU Penalty"];
+  const calculatorCsv = [
+    calculatorHeaders.map(csvEscape).join(","),
+    ...activeRows.map((row) =>
+      [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        row.type,
+        formatNumber(row.euasRequiredT, 3),
+        formatCurrency(row.euasCostEur),
+        formatNumber(row.attainedGhgIntensity, 3),
+        formatNumber(row.complianceBalanceT, 3),
+        formatCurrency(row.fuelEuPenaltyEur),
+      ]
+        .map(csvEscape)
+        .join(",")
+    ),
+  ].join("\n");
+
+  const summaryHeaders = ["Vessel", "EUAs Required", "EUA Cost", "Avg GHG Intensity"];
+  const summaryCsv = [
+    summaryHeaders.map(csvEscape).join(","),
+    ...vesselSummary.map((row) =>
+      [row.vesselName, formatNumber(row.euasRequired, 3), formatCurrency(row.euasCost), formatNumber(row.averageIntensity, 3)]
+        .map(csvEscape)
+        .join(",")
+    ),
+  ].join("\n");
+
+  downloadText(`fuel-ets-${slug}-calculator.csv`, calculatorCsv, "text/csv");
+  downloadText(`fuel-ets-${slug}-summary.csv`, summaryCsv, "text/csv");
 }
 
 function updateCalculatorField(field, rawValue) {
@@ -829,7 +995,7 @@ function renderEditorDialog() {
   if (!dialogState) return;
   const { sheetKey, draft } = dialogState;
   const columns = SHEET_COLUMNS[sheetKey];
-  elements.editorDialogTitle.textContent = `${dialogState.rowId ? "Edit" : "Add"} ${viewMeta[sheetKey].title} row`;
+  elements.editorDialogTitle.textContent = `${dialogState.rowId ? "Edit" : "Add"} ${sheetKey} row`;
   elements.editorDialogBody.innerHTML = columns
     .map((column) => {
       const value = draft[column] ?? "";
@@ -893,10 +1059,59 @@ function deleteSheetRow(sheetKey, rowId) {
   recomputeAndRender();
 }
 
-function handleContentClick(event) {
+function handleLibraryClick(event) {
   const actionTarget = event.target.closest("[data-action]");
   if (!actionTarget) return;
   const { action, sheet, rowId } = actionTarget.dataset;
+
+  if (action === "select-library-sheet") {
+    stateStore.ui.librarySheet = sheet;
+    stateStore.ui.librarySearch = "";
+    stateStore.ui.libraryPage = 1;
+    renderLibraryDrawer();
+    return;
+  }
+
+  if (action === "library-page-prev") {
+    stateStore.ui.libraryPage = Math.max(1, stateStore.ui.libraryPage - 1);
+    renderLibraryDrawer();
+    return;
+  }
+
+  if (action === "library-page-next") {
+    stateStore.ui.libraryPage += 1;
+    renderLibraryDrawer();
+    return;
+  }
+
+  if (action === "open-row-editor") {
+    openEditorDialog(sheet, rowId);
+    return;
+  }
+
+  if (action === "delete-sheet-row") {
+    deleteSheetRow(sheet, rowId);
+  }
+}
+
+function handleLibraryInput(event) {
+  if (event.target.dataset.action === "library-search") {
+    stateStore.ui.librarySearch = event.target.value;
+    stateStore.ui.libraryPage = 1;
+    renderLibraryDrawer();
+  }
+}
+
+function handleMainClick(event) {
+  const actionTarget = event.target.closest("[data-action]");
+  if (!actionTarget) return;
+  const { action, view, rowId } = actionTarget.dataset;
+
+  if (action === "select-view") {
+    stateStore.ui.activeView = view;
+    render();
+    return;
+  }
 
   if (action === "select-calculator-row") {
     stateStore.ui.calculatorSelectedId = rowId;
@@ -931,56 +1146,22 @@ function handleContentClick(event) {
     return;
   }
 
-  if (action === "open-row-editor") {
-    openEditorDialog(sheet, rowId);
-    return;
-  }
-
-  if (action === "delete-sheet-row") {
-    deleteSheetRow(sheet, rowId);
-    return;
-  }
-
-  if (action === "editor-page-prev") {
-    stateStore.ui.editorPage = Math.max(1, stateStore.ui.editorPage - 1);
-    render();
-    return;
-  }
-
-  if (action === "editor-page-next") {
-    stateStore.ui.editorPage += 1;
-    render();
+  if (action === "close-drilldown") {
+    closeDrilldown();
   }
 }
 
-function handleContentInput(event) {
+function handleMainInput(event) {
   const calcField = event.target.dataset.calcField;
   if (calcField) {
     updateCalculatorField(calcField, event.target.value);
     return;
   }
 
-  const action = event.target.dataset.action;
-  if (action === "calculator-search") {
+  if (event.target.dataset.action === "calculator-search") {
     stateStore.ui.calculatorSearch = event.target.value;
     render();
-    return;
   }
-
-  if (action === "editor-search") {
-    stateStore.ui.editorSearch = event.target.value;
-    stateStore.ui.editorPage = 1;
-    render();
-  }
-}
-
-function handleTabClick(event) {
-  const button = event.target.closest("[data-sheet]");
-  if (!button) return;
-  stateStore.ui.activeSheet = button.dataset.sheet;
-  stateStore.ui.editorSearch = "";
-  stateStore.ui.editorPage = 1;
-  render();
 }
 
 async function bootstrap() {
@@ -992,19 +1173,36 @@ async function bootstrap() {
   stateStore.state.parameters = deepClone(stateStore.derived.parameters);
   ensureCalculatorSelection();
 
-  elements.sheetTabs.addEventListener("click", handleTabClick);
-  elements.contentView.addEventListener("click", handleContentClick);
-  elements.contentView.addEventListener("input", handleContentInput);
+  elements.viewTabs.addEventListener("click", handleMainClick);
+  elements.contentView.addEventListener("click", handleMainClick);
+  elements.contentView.addEventListener("input", handleMainInput);
+  elements.vesselFilter.addEventListener("change", (event) => {
+    stateStore.ui.vesselFilter = event.target.value;
+    stateStore.ui.calculatorSelectedId = null;
+    stateStore.ui.drilldown = null;
+    render();
+  });
+  elements.libraryToggleButton.addEventListener("click", () => {
+    stateStore.ui.libraryOpen = !stateStore.ui.libraryOpen;
+    renderLibraryDrawer();
+  });
+  elements.closeLibraryButton.addEventListener("click", () => {
+    stateStore.ui.libraryOpen = false;
+    renderLibraryDrawer();
+  });
+  elements.libraryBackdrop.addEventListener("click", () => {
+    stateStore.ui.libraryOpen = false;
+    renderLibraryDrawer();
+  });
+  elements.libraryTabs.addEventListener("click", handleLibraryClick);
+  elements.libraryContent.addEventListener("click", handleLibraryClick);
+  elements.libraryContent.addEventListener("input", handleLibraryInput);
+  elements.exportFilteredButton.addEventListener("click", exportFilteredData);
   elements.resetWorkbookButton.addEventListener("click", () => {
     stateStore.state = deepClone(stateStore.seedState);
     stateStore.ui.calculatorSelectedId = null;
+    stateStore.ui.drilldown = null;
     recomputeAndRender();
-  });
-  elements.exportStateButton.addEventListener("click", () => {
-    downloadJson("eu-ets-fueleu-dashboard-state.json", {
-      state: persistableState(stateStore.state),
-      derived: stateStore.derived,
-    });
   });
   elements.closeEditorButton.addEventListener("click", () => {
     stateStore.ui.dialog = null;
