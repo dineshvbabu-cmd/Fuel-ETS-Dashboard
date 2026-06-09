@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EU ETS and FuelEU Compliance Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-card">
+        <p class="eyebrow">Workbook to Web App</p>
+        <h1>Compliance Studio</h1>
+        <p class="lede">
+          EU ETS and FuelEU Maritime dashboard built from your Excel calculator, with live editable sheet data and spreadsheet-equivalent calculations.
+        </p>
+      </div>
+
+      <section class="side-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="eyebrow">Workbook Status</p>
+            <h2>Connected Model</h2>
+          </div>
+          <span class="status-pill">Ready</span>
+        </div>
+        <dl class="meta-grid" id="metaGrid"></dl>
+      </section>
+
+      <section class="side-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="eyebrow">Sheets</p>
+            <h2>Navigate</h2>
+          </div>
+        </div>
+        <div class="sheet-tabs" id="sheetTabs"></div>
+      </section>
+
+      <section class="side-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="eyebrow">Actions</p>
+            <h2>Data Control</h2>
+          </div>
+        </div>
+        <div class="action-stack">
+          <button id="resetWorkbookButton" class="ghost-button" type="button">Reset to workbook seed</button>
+          <button id="exportStateButton" class="primary-button" type="button">Export current data</button>
+        </div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="hero-card">
+        <div>
+          <p class="eyebrow">Operational Dashboard</p>
+          <h2 id="viewTitle">Dashboard</h2>
+          <p class="hero-copy" id="viewDescription">
+            Review fleet exposure, update calculator inputs, and maintain reference sheets without leaving the dashboard.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <div class="hero-chip">
+            <span class="hero-chip-label">Source workbook</span>
+            <strong id="sourceWorkbook">Loading...</strong>
+          </div>
+          <div class="hero-chip">
+            <span class="hero-chip-label">State storage</span>
+            <strong>Browser local cache</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="kpi-grid" id="kpiGrid"></section>
+      <section class="content-view" id="contentView"></section>
+    </main>
+  </div>
+
+  <dialog id="rowEditorDialog" class="editor-dialog">
+    <form method="dialog" class="editor-dialog-shell">
+      <div class="editor-dialog-head">
+        <div>
+          <p class="eyebrow">Sheet Row Editor</p>
+          <h3 id="editorDialogTitle">Edit row</h3>
+        </div>
+        <button id="closeEditorButton" class="ghost-button" type="button">Close</button>
+      </div>
+      <div id="editorDialogBody" class="editor-dialog-body"></div>
+      <div class="editor-dialog-actions">
+        <button id="saveEditorButton" class="primary-button" type="button">Save row</button>
+      </div>
+    </form>
+  </dialog>
+
+  <datalist id="portCodes"></datalist>
+  <datalist id="fuelTypes"></datalist>
+  <datalist id="imoNumbers"></datalist>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
