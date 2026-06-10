@@ -269,9 +269,228 @@ h4 {
   margin-top: 6px;
 }
 
+.kpi-projection-tag {
+  display: inline-flex;
+  margin-top: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.kpi-projection-tag.better {
+  background: rgba(22, 138, 24, 0.12);
+  color: var(--green);
+}
+
+.kpi-projection-tag.worse {
+  background: rgba(198, 61, 61, 0.12);
+  color: var(--risk);
+}
+
+.kpi-projection-tag.same {
+  background: rgba(24, 44, 77, 0.08);
+  color: var(--muted);
+}
+
+.kpi-projection-value {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .content-view {
   display: grid;
   gap: 16px;
+}
+
+.projection-section,
+.projection-card {
+  display: grid;
+  gap: 12px;
+}
+
+.section-toggle {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(127, 119, 221, 0.24);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+}
+
+.section-toggle-copy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-toggle-copy small,
+.section-toggle-note {
+  display: block;
+  color: #655ab7;
+  font-size: 0.84rem;
+}
+
+.section-chevron {
+  font-size: 1.15rem;
+  color: #655ab7;
+  transition: transform 160ms ease;
+}
+
+.section-chevron.open {
+  transform: rotate(180deg);
+}
+
+.projection-shell.collapsed {
+  display: none;
+}
+
+.projection-card {
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(127, 119, 221, 0.22);
+  background: linear-gradient(180deg, rgba(250, 248, 255, 0.96) 0%, rgba(244, 240, 255, 0.94) 100%);
+}
+
+.projection-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.projection-header h3,
+.projection-block h4 {
+  color: #4a3d9e;
+}
+
+.scenario-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 119, 221, 0.2);
+  background: #fff;
+  color: #4a3d9e;
+}
+
+.scenario-chip.active {
+  background: linear-gradient(135deg, #7f77dd 0%, #554bb6 100%);
+  color: #fff;
+  border-color: transparent;
+}
+
+.projection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.projection-block {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(127, 119, 221, 0.16);
+}
+
+.projection-row,
+.projection-select-wrap {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.projection-range {
+  width: 100%;
+  accent-color: #7f77dd;
+}
+
+.projection-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.projection-select {
+  max-width: 180px;
+}
+
+.projection-summary-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #2a2358 0%, #4a3d9e 100%);
+  color: #fff;
+}
+
+.projection-summary-item {
+  text-align: center;
+}
+
+.projection-summary-label {
+  font-size: 0.78rem;
+  opacity: 0.82;
+}
+
+.projection-summary-value {
+  margin-top: 6px;
+  font-size: 1.2rem;
+  font-family: var(--font-display);
+}
+
+.projection-summary-delta {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.projection-summary-delta.better {
+  color: #adf0ad;
+}
+
+.projection-summary-delta.worse {
+  color: #ffc2c2;
+}
+
+.projection-summary-delta.same {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.projection-col-head {
+  color: #655ab7;
+}
+
+.projection-cell {
+  color: #4a3d9e;
+  font-weight: 600;
+}
+
+.projection-delta {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.projection-delta.better {
+  color: var(--green);
+}
+
+.projection-delta.worse {
+  color: var(--risk);
+}
+
+.projection-delta.same {
+  color: var(--muted);
 }
 
 .analytics-header {
@@ -717,6 +936,11 @@ button:hover {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .projection-grid,
+  .projection-summary-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .dashboard-layout {
     grid-template-columns: 1fr;
   }
@@ -736,9 +960,16 @@ button:hover {
     grid-template-columns: 1fr;
   }
 
+  .projection-grid,
+  .projection-summary-bar {
+    grid-template-columns: 1fr;
+  }
+
   .topbar,
   .calculator-toolbar,
-  .library-toolbar {
+  .library-toolbar,
+  .projection-header,
+  .section-toggle {
     flex-direction: column;
     align-items: stretch;
   }

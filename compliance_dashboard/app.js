@@ -14,6 +14,13 @@ import {
 
 const PAGE_SIZE = 18;
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
+const PROJECTION_BASELINE = {
+  waspFactor: 0.95,
+  bioBlend: 0,
+  bioType: "Bio-diesel",
+  rfnboBlend: 0,
+  rfnboType: "e-diesel",
+};
 
 const elements = {
   viewTabs: document.getElementById("viewTabs"),
@@ -54,6 +61,9 @@ const stateStore = {
     libraryPage: 1,
     dialog: null,
     drilldown: null,
+    projectionOpen: true,
+    projectionPreset: "baseline",
+    projection: { ...PROJECTION_BASELINE },
   },
 };
 
@@ -238,9 +248,22 @@ function renderVesselFilter() {
 }
 
 function computeFilteredDashboard(activeRows) {
-  const totalEuasRequired = activeRows.reduce((sum, row) => sum + numberOrZero(row.euasRequiredT), 0);
-  const totalEuasCost = activeRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
-  const totalPenalty = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuPenaltyEur), 0);
+  return computeDashboardSummary(activeRows);
+}
+
+function computeDashboardSummary(activeRows, metrics = {}) {
+  const euasKey = metrics.euasKey || "euasRequiredT";
+  const costKey = metrics.costKey || "euasCostEur";
+  const penaltyKey = metrics.penaltyKey || "fuelEuPenaltyEur";
+  const numeratorKey = metrics.numeratorKey || "fuelEuWtwEmissionsG";
+  const denominatorKey = metrics.denominatorKey || "fuelEuDenomStep1Mj";
+  const energyKey = metrics.energyKey || "fuelEuEnergyStep2Mj";
+  const balanceKey = metrics.balanceKey || "complianceBalanceT";
+  const ghgKey = metrics.ghgKey || "attainedGhgIntensity";
+
+  const totalEuasRequired = activeRows.reduce((sum, row) => sum + numberOrZero(row[euasKey]), 0);
+  const totalEuasCost = activeRows.reduce((sum, row) => sum + numberOrZero(row[costKey]), 0);
+  const totalPenalty = activeRows.reduce((sum, row) => sum + numberOrZero(row[penaltyKey]), 0);
   const totalFuelConsumed = activeRows.reduce(
     (sum, row) =>
       sum +
@@ -249,12 +272,12 @@ function computeFilteredDashboard(activeRows) {
       numberOrZero(row.bioFuelConsumptionMt),
     0
   );
-  const totalNumerator = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuWtwEmissionsG), 0);
-  const totalDenominator = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuDenomStep1Mj), 0);
-  const totalEnergy = activeRows.reduce((sum, row) => sum + numberOrZero(row.fuelEuEnergyStep2Mj), 0);
+  const totalNumerator = activeRows.reduce((sum, row) => sum + numberOrZero(row[numeratorKey]), 0);
+  const totalDenominator = activeRows.reduce((sum, row) => sum + numberOrZero(row[denominatorKey]), 0);
+  const totalEnergy = activeRows.reduce((sum, row) => sum + numberOrZero(row[energyKey]), 0);
   const averageIntensity = totalDenominator > 0 ? totalNumerator / totalDenominator : 0;
   const target = stateStore.derived.parameterValues.fueleuTarget;
-  const complianceBalance = totalDenominator > 0 ? (target - averageIntensity) * totalEnergy / 1_000_000 : 0;
+  const complianceBalance = totalDenominator > 0 ? (target - averageIntensity) * totalEnergy / 1_000_000 : activeRows.reduce((sum, row) => sum + numberOrZero(row[balanceKey]), 0);
   const voyageRows = activeRows.filter((row) => row.type === "Voyage");
   const portStayRows = activeRows.filter((row) => row.type === "Port Stay");
 
@@ -263,11 +286,11 @@ function computeFilteredDashboard(activeRows) {
       const rows = activeRows.filter((row) => row.vesselName === vesselName);
       return {
         vesselName,
-        euasRequired: rows.reduce((sum, row) => sum + numberOrZero(row.euasRequiredT), 0),
-        euasCost: rows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0),
+        euasRequired: rows.reduce((sum, row) => sum + numberOrZero(row[euasKey]), 0),
+        euasCost: rows.reduce((sum, row) => sum + numberOrZero(row[costKey]), 0),
         averageIntensity: (() => {
-          const numerator = rows.reduce((sum, row) => sum + numberOrZero(row.fuelEuWtwEmissionsG), 0);
-          const denominator = rows.reduce((sum, row) => sum + numberOrZero(row.fuelEuDenomStep1Mj), 0);
+          const numerator = rows.reduce((sum, row) => sum + numberOrZero(row[numeratorKey]), 0);
+          const denominator = rows.reduce((sum, row) => sum + numberOrZero(row[denominatorKey]), 0);
           return denominator > 0 ? numerator / denominator : 0;
         })(),
       };
@@ -284,11 +307,138 @@ function computeFilteredDashboard(activeRows) {
     voyageRows,
     portStayRows,
     byVessel,
+    ghgKey,
   };
+}
+
+function projectionIsActive() {
+  const { waspFactor, bioBlend, rfnboBlend } = stateStore.ui.projection;
+  return Math.abs(waspFactor - PROJECTION_BASELINE.waspFactor) > 0.0001 || bioBlend > 0 || rfnboBlend > 0;
+}
+
+function findFuelReference(name) {
+  const query = lower(name);
+  return stateStore.derived.fuelReference.find(
+    (row) => lower(row.alias) === query || lower(row.fuelPathway) === query || lower(`${row.fuelPathway} ${row.fuelClass}`) === query
+  ) || null;
+}
+
+function deltaTone(delta, lowerIsBetter = true) {
+  if (Math.abs(delta) < 0.0001) return "same";
+  const improved = lowerIsBetter ? delta < 0 : delta > 0;
+  return improved ? "better" : "worse";
+}
+
+function deltaArrow(delta, lowerIsBetter = true) {
+  if (Math.abs(delta) < 0.0001) return "•";
+  const improved = lowerIsBetter ? delta < 0 : delta > 0;
+  return improved ? "▼" : "▲";
+}
+
+function formatDelta(value, digits = 1, unit = "", lowerIsBetter = true) {
+  const tone = deltaTone(value, lowerIsBetter);
+  const arrow = deltaArrow(value, lowerIsBetter);
+  const absValue = formatNumber(Math.abs(value), digits);
+  return {
+    tone,
+    arrow,
+    text: `${arrow} ${absValue}${unit ? ` ${unit}` : ""}`,
+  };
+}
+
+function getProjectionRows(activeRows) {
+  const scenario = stateStore.ui.projection;
+  const params = stateStore.derived.parameterValues;
+  const bioRef = findFuelReference(scenario.bioType);
+  const rfnboRef = findFuelReference(scenario.rfnboType);
+
+  return activeRows.map((row) => {
+    const scope = numberOrZero(row.scopePercent);
+    const actualWind = row.windFactor === null || row.windFactor === undefined ? PROJECTION_BASELINE.waspFactor : numberOrZero(row.windFactor) || PROJECTION_BASELINE.waspFactor;
+    const projectedWind = projectionIsActive() ? numberOrZero(scenario.waspFactor) || PROJECTION_BASELINE.waspFactor : actualWind;
+    const totalFossilMt = numberOrZero(row.fuel1ConsumptionMt) + numberOrZero(row.fuel2ConsumptionMt);
+    const fossilEnergyMj = numberOrZero(row.fuel1EnergyMj) + numberOrZero(row.fuel2EnergyMj);
+    const fossilWtwG = numberOrZero(row.fuel1WtwG) + numberOrZero(row.fuel2WtwG);
+    const fossilCfAvg = totalFossilMt > 0 && scope > 0 ? numberOrZero(row.fossilCo2InScopeT) / (totalFossilMt * scope) : 0;
+    const fossilWtwAvg = fossilEnergyMj > 0 ? fossilWtwG / fossilEnergyMj : 0;
+    const actualBioEnergyMj = numberOrZero(row.bioEnergyMj);
+    const actualBioMt = numberOrZero(row.bioFuelConsumptionMt);
+    const actualBioWtwAvg = actualBioEnergyMj > 0 ? numberOrZero(row.bioWtwG) / actualBioEnergyMj : numberOrZero(bioRef?.wtWPerMj);
+    const actualBioCf = actualBioMt > 0 ? (numberOrZero(row.etsInScopeCo2eqT) - numberOrZero(row.fossilCo2InScopeT)) / Math.max(actualBioMt * Math.max(scope, 1), 1) : numberOrZero(findFuelReference(row.bioFuelType)?.etsCo2Cf);
+    const actualBioRwd = actualBioEnergyMj > 0 && scope > 0 ? Math.max(1, (numberOrZero(row.fuelEuDenomStep1Mj) - numberOrZero(row.opsElectricityInScopeMj) - fossilEnergyMj * scope) / (actualBioEnergyMj * scope) || 1) : Math.max(1, numberOrZero(findFuelReference(row.bioFuelType)?.rwd) || 1);
+    const bioBlend = Math.min(0.5, numberOrZero(scenario.bioBlend) / 100);
+    const rfnboBlend = Math.min(0.3, numberOrZero(scenario.rfnboBlend) / 100);
+    const combinedBlend = Math.min(0.8, bioBlend + rfnboBlend);
+    const fossilRetainedShare = Math.max(0, 1 - combinedBlend);
+    const newBioMt = totalFossilMt * bioBlend;
+    const newRfnboMt = totalFossilMt * rfnboBlend;
+    const newBioEnergyMj = fossilEnergyMj * bioBlend;
+    const newRfnboEnergyMj = fossilEnergyMj * rfnboBlend;
+    const retainedFossilEnergyMj = fossilEnergyMj * fossilRetainedShare;
+    const retainedFossilMt = totalFossilMt * fossilRetainedShare;
+    const bioWtW = numberOrZero(bioRef?.wtWPerMj) || actualBioWtwAvg;
+    const bioCf = numberOrZero(bioRef?.etsCo2Cf);
+    const bioRwd = Math.max(1, numberOrZero(bioRef?.rwd) || 1);
+    const rfnboWtW = numberOrZero(rfnboRef?.wtWPerMj);
+    const rfnboCf = numberOrZero(rfnboRef?.etsCo2Cf);
+    const rfnboRwd = Math.max(1, numberOrZero(rfnboRef?.rwd) || 2);
+    const projectedPreWindWtw =
+      retainedFossilEnergyMj * fossilWtwAvg +
+      actualBioEnergyMj * actualBioWtwAvg +
+      newBioEnergyMj * bioWtW +
+      newRfnboEnergyMj * rfnboWtW;
+    const projectedFuelEuWtwEmissionsG = projectedPreWindWtw * projectedWind * scope + numberOrZero(row.elecWtwG);
+    const projectedFuelEuDenomStep1Mj =
+      (retainedFossilEnergyMj + actualBioEnergyMj * actualBioRwd + newBioEnergyMj * bioRwd + newRfnboEnergyMj * rfnboRwd) * scope +
+      numberOrZero(row.opsElectricityInScopeMj);
+    const projectedFuelEuEnergyStep2Mj = numberOrZero(row.fuelEuEnergyStep2Mj);
+    const projectedAttainedGhgIntensity =
+      projectedFuelEuDenomStep1Mj > 0 ? projectedFuelEuWtwEmissionsG / projectedFuelEuDenomStep1Mj : null;
+    const projectedComplianceBalanceT =
+      projectedFuelEuDenomStep1Mj > 0 && projectedAttainedGhgIntensity !== null
+        ? (params.fueleuTarget - projectedAttainedGhgIntensity) * projectedFuelEuEnergyStep2Mj / 1_000_000
+        : null;
+    const projectedFuelEuPenaltyEur =
+      projectedAttainedGhgIntensity && projectedComplianceBalanceT !== null && projectedComplianceBalanceT < 0
+        ? Math.abs(projectedComplianceBalanceT) * 1_000_000 / (projectedAttainedGhgIntensity * params.vlsfoMj) * params.penRate * params.penMultiplier
+        : 0;
+    const projectedEtsInScopeCo2eqT =
+      (retainedFossilMt * fossilCfAvg + actualBioMt * Math.max(0, actualBioCf) + newBioMt * bioCf + newRfnboMt * rfnboCf) * scope;
+    const projectedEuasRequiredT = projectedEtsInScopeCo2eqT * params.etsPhaseIn;
+    const projectedEuasCostEur = projectedEuasRequiredT * params.euaPrice;
+
+    return {
+      ...row,
+      projectedFuelEuWtwEmissionsG,
+      projectedFuelEuDenomStep1Mj,
+      projectedFuelEuEnergyStep2Mj,
+      projectedAttainedGhgIntensity,
+      projectedComplianceBalanceT,
+      projectedFuelEuPenaltyEur,
+      projectedEtsInScopeCo2eqT,
+      projectedEuasRequiredT,
+      projectedEuasCostEur,
+      deltaEuasRequiredT: projectedEuasRequiredT - numberOrZero(row.euasRequiredT),
+      deltaAttainedGhgIntensity: numberOrZero(projectedAttainedGhgIntensity) - numberOrZero(row.attainedGhgIntensity),
+      deltaComplianceBalanceT: numberOrZero(projectedComplianceBalanceT) - numberOrZero(row.complianceBalanceT),
+    };
+  });
 }
 
 function renderKpis() {
   const dashboard = computeFilteredDashboard(getActiveRows());
+  const projectedRows = getProjectionRows(getActiveRows());
+  const projectedDashboard = computeDashboardSummary(projectedRows, {
+    euasKey: "projectedEuasRequiredT",
+    costKey: "projectedEuasCostEur",
+    penaltyKey: "projectedFuelEuPenaltyEur",
+    numeratorKey: "projectedFuelEuWtwEmissionsG",
+    denominatorKey: "projectedFuelEuDenomStep1Mj",
+    energyKey: "projectedFuelEuEnergyStep2Mj",
+    balanceKey: "projectedComplianceBalanceT",
+    ghgKey: "projectedAttainedGhgIntensity",
+  });
+  const showProjection = projectionIsActive();
   const cards = [
     {
       key: "total-euas",
@@ -297,6 +447,8 @@ function renderKpis() {
       detail: "t CO2eq",
       note: "Click charts for record-level rows",
       tone: "risk",
+      projectionTag: formatDelta(projectedDashboard.totalEuasRequired - dashboard.totalEuasRequired, 1, "t", true),
+      projectionValue: `${formatNumber(projectedDashboard.totalEuasRequired, 1)} projected`,
     },
     {
       key: "total-cost",
@@ -305,6 +457,8 @@ function renderKpis() {
       detail: `@ EUR ${formatInteger(stateStore.derived.parameterValues.euaPrice)} / EUA`,
       note: "Filtered by current vessel",
       tone: "warn",
+      projectionTag: formatDelta(projectedDashboard.totalEuasCost - dashboard.totalEuasCost, 0, "", true),
+      projectionValue: `${formatCurrency(projectedDashboard.totalEuasCost)} projected`,
     },
     {
       key: "compliance-balance",
@@ -313,6 +467,8 @@ function renderKpis() {
       detail: "t CO2eq surplus / deficit",
       note: "Based on FuelEU target",
       tone: dashboard.complianceBalance >= 0 ? "good" : "risk",
+      projectionTag: formatDelta(projectedDashboard.complianceBalance - dashboard.complianceBalance, 1, "t", false),
+      projectionValue: `${projectedDashboard.complianceBalance >= 0 ? "+" : ""}${formatNumber(projectedDashboard.complianceBalance, 1)} projected`,
     },
     {
       key: "penalty",
@@ -321,6 +477,8 @@ function renderKpis() {
       detail: dashboard.totalPenalty > 0 ? "Penalty triggered by deficits" : "No penalty due",
       note: "Calculator-derived total",
       tone: dashboard.totalPenalty > 0 ? "risk" : "good",
+      projectionTag: formatDelta(projectedDashboard.totalPenalty - dashboard.totalPenalty, 0, "", true),
+      projectionValue: `${formatCurrency(projectedDashboard.totalPenalty)} projected`,
     },
     {
       key: "avg-ghg",
@@ -329,6 +487,8 @@ function renderKpis() {
       detail: `g/MJ vs ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 2)} target`,
       note: "Voyage and port-stay weighted",
       tone: dashboard.averageIntensity <= stateStore.derived.parameterValues.fueleuTarget ? "good" : "warn",
+      projectionTag: formatDelta(projectedDashboard.averageIntensity - dashboard.averageIntensity, 2, "g/MJ", true),
+      projectionValue: `${formatNumber(projectedDashboard.averageIntensity, 2)} projected`,
     },
     {
       key: "fuel-consumed",
@@ -337,6 +497,8 @@ function renderKpis() {
       detail: "MT all fuel types",
       note: "Fossil plus biofuel",
       tone: "neutral",
+      projectionTag: formatDelta(0, 1, "MT", true),
+      projectionValue: "Energy held constant",
     },
     {
       key: "voyages",
@@ -345,6 +507,8 @@ function renderKpis() {
       detail: "Click charts to view voyages",
       note: "Current filter only",
       tone: "neutral",
+      projectionTag: formatDelta(0, 0, "", true),
+      projectionValue: "Count unchanged",
     },
     {
       key: "port-stays",
@@ -353,6 +517,8 @@ function renderKpis() {
       detail: "Click charts to view port stays",
       note: "Current filter only",
       tone: "neutral",
+      projectionTag: formatDelta(0, 0, "", true),
+      projectionValue: "Count unchanged",
     },
   ];
 
@@ -364,6 +530,11 @@ function renderKpis() {
           <div class="kpi-value">${card.value}</div>
           <div class="kpi-detail">${card.detail}</div>
           <div class="kpi-note">${card.note}</div>
+          ${
+            showProjection
+              ? `<div class="kpi-projection-tag ${card.projectionTag.tone}">${card.projectionTag.text}</div><div class="kpi-projection-value">${card.projectionValue}</div>`
+              : ""
+          }
         </button>
       `
     )
@@ -647,12 +818,181 @@ function renderDrilldownPane() {
   `;
 }
 
+function renderProjectionPanel() {
+  const activeRows = getActiveRows();
+  const projectedRows = getProjectionRows(activeRows);
+  const baseline = computeFilteredDashboard(activeRows);
+  const projected = computeDashboardSummary(projectedRows, {
+    euasKey: "projectedEuasRequiredT",
+    costKey: "projectedEuasCostEur",
+    penaltyKey: "projectedFuelEuPenaltyEur",
+    numeratorKey: "projectedFuelEuWtwEmissionsG",
+    denominatorKey: "projectedFuelEuDenomStep1Mj",
+    energyKey: "projectedFuelEuEnergyStep2Mj",
+    balanceKey: "projectedComplianceBalanceT",
+    ghgKey: "projectedAttainedGhgIntensity",
+  });
+  const showProjection = projectionIsActive();
+  const { waspFactor, bioBlend, bioType, rfnboBlend, rfnboType } = stateStore.ui.projection;
+  const summaryItems = [
+    ["Projected EUAs", formatNumber(projected.totalEuasRequired, 1), formatDelta(projected.totalEuasRequired - baseline.totalEuasRequired, 1, "t", true)],
+    ["Projected cost", formatCurrency(projected.totalEuasCost), formatDelta(projected.totalEuasCost - baseline.totalEuasCost, 0, "", true)],
+    ["Compliance balance", `${projected.complianceBalance >= 0 ? "+" : ""}${formatNumber(projected.complianceBalance, 1)}`, formatDelta(projected.complianceBalance - baseline.complianceBalance, 1, "t", false)],
+    ["GHG vs baseline", `${formatNumber(projected.averageIntensity, 2)} g/MJ`, formatDelta(projected.averageIntensity - baseline.averageIntensity, 2, "g/MJ", true)],
+  ];
+
+  return `
+    <section class="projection-section">
+      <button class="section-toggle" type="button" data-action="toggle-projection-panel" aria-expanded="${stateStore.ui.projectionOpen}">
+        <span class="section-toggle-copy">
+          <span class="section-chevron ${stateStore.ui.projectionOpen ? "open" : ""}">⌄</span>
+          <span><strong>Compliance Projection Scenarios</strong><small>WASP · Biofuel · RFNBO</small></span>
+        </span>
+        <span class="section-toggle-note">Adjust sliders and charts update live</span>
+      </button>
+      <div class="projection-shell ${stateStore.ui.projectionOpen ? "" : "collapsed"}">
+        <div class="projection-card">
+          <div class="projection-header">
+            <h3>Scenario Builder</h3>
+            <div class="scenario-btns">
+              ${[
+                ["baseline", "Baseline"],
+                ["wasp10", "WASP 10%"],
+                ["wasp20", "WASP 20%"],
+                ["bio10", "Bio 10%"],
+                ["bio20", "Bio 20%"],
+                ["rfnbo10", "RFNBO 10%"],
+                ["rfnbo20", "RFNBO 20%"],
+                ["combined", "Combined"],
+              ]
+                .map(
+                  ([preset, label]) => `
+                    <button class="scenario-chip ${stateStore.ui.projectionPreset === preset ? "active" : ""}" type="button" data-action="apply-projection-preset" data-preset="${preset}">
+                      ${label}
+                    </button>
+                  `
+                )
+                .join("")}
+            </div>
+          </div>
+          <div class="projection-grid">
+            <article class="projection-block">
+              <h4>Wind-Assisted Propulsion (WASP)</h4>
+              <div class="projection-row"><span>Wind factor (f_wind)</span><strong>${formatNumber(waspFactor, 2)}</strong></div>
+              <input class="projection-range" type="range" min="0.70" max="0.95" step="0.01" value="${waspFactor}" data-projection-key="waspFactor">
+              <div class="projection-scale"><span>0.70 max wind</span><span>0.95 baseline</span></div>
+              <p class="helper-text">Lower f_wind reduces the FuelEU WtW numerator and improves voyage GHG intensity.</p>
+            </article>
+            <article class="projection-block">
+              <h4>Biofuel Blend</h4>
+              <div class="projection-row"><span>Blend</span><strong>${bioBlend}%</strong></div>
+              <input class="projection-range" type="range" min="0" max="50" step="1" value="${bioBlend}" data-projection-key="bioBlend">
+              <div class="projection-scale"><span>0%</span><span>50% blend</span></div>
+              <label class="projection-select-wrap">
+                <span>Fuel type</span>
+                <select class="toolbar-select projection-select" data-projection-key="bioType">
+                  ${["Bio-diesel", "HVO"].map((option) => `<option value="${option}" ${bioType === option ? "selected" : ""}>${option}</option>`).join("")}
+                </select>
+              </label>
+              <p class="helper-text">Certified biofuel reduces ETS CO2 directly and also helps the FuelEU intensity outcome.</p>
+            </article>
+            <article class="projection-block">
+              <h4>RFNBO Blend</h4>
+              <div class="projection-row"><span>Blend</span><strong>${rfnboBlend}%</strong></div>
+              <input class="projection-range" type="range" min="0" max="30" step="1" value="${rfnboBlend}" data-projection-key="rfnboBlend">
+              <div class="projection-scale"><span>0%</span><span>30% RFNBO</span></div>
+              <label class="projection-select-wrap">
+                <span>Fuel type</span>
+                <select class="toolbar-select projection-select" data-projection-key="rfnboType">
+                  ${["e-diesel", "e-methanol"].map((option) => `<option value="${option}" ${rfnboType === option ? "selected" : ""}>${option}</option>`).join("")}
+                </select>
+              </label>
+              <p class="helper-text">RFNBO uses the reward factor window, making denominator uplift strongest during 2025–2033.</p>
+            </article>
+          </div>
+          <div class="projection-summary-bar ${showProjection ? "active" : ""}">
+            ${summaryItems
+              .map(
+                ([label, value, delta]) => `
+                  <div class="projection-summary-item">
+                    <div class="projection-summary-label">${label}</div>
+                    <div class="projection-summary-value">${value}</div>
+                    <div class="projection-summary-delta ${delta.tone}">${delta.text}</div>
+                  </div>
+                `
+              )
+              .join("")}
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderProjectionVoyageTable() {
+  const projectedRows = getProjectionRows(getActiveRows().filter((row) => row.type === "Voyage"));
+  const showProjection = projectionIsActive();
+  return `
+    <article class="table-card">
+      <div class="table-head">
+        <div>
+          <p class="eyebrow">Voyage Table</p>
+          <h3>Actual and projected compliance by voyage</h3>
+        </div>
+        <span class="chip">${projectedRows.length} voyages</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Record</th>
+              <th>Vessel</th>
+              <th>Route</th>
+              <th>EUAs</th>
+              <th>GHG</th>
+              <th>Balance</th>
+              ${showProjection ? `<th class="projection-col-head">Proj EUAs</th><th class="projection-col-head">Proj GHG</th><th class="projection-col-head">Proj Balance</th>` : ""}
+            </tr>
+          </thead>
+          <tbody>
+            ${projectedRows
+              .map((row) => {
+                const euaDelta = formatDelta(row.deltaEuasRequiredT, 2, "", true);
+                const ghgDelta = formatDelta(row.deltaAttainedGhgIntensity, 2, "", true);
+                const balanceDelta = formatDelta(row.deltaComplianceBalanceT, 2, "", false);
+                return `
+                  <tr>
+                    <td>${row.recordId}</td>
+                    <td>${row.vesselName}</td>
+                    <td>${row.route}</td>
+                    <td>${formatNumber(row.euasRequiredT, 3)}</td>
+                    <td>${formatNumber(row.attainedGhgIntensity, 3)}</td>
+                    <td class="${toneClass(row.complianceBalanceT || 0)}">${formatNumber(row.complianceBalanceT, 3)}</td>
+                    ${
+                      showProjection
+                        ? `<td class="projection-cell">${formatNumber(row.projectedEuasRequiredT, 3)} <span class="projection-delta ${euaDelta.tone}">${euaDelta.text}</span></td>
+                           <td class="projection-cell">${formatNumber(row.projectedAttainedGhgIntensity, 3)} <span class="projection-delta ${ghgDelta.tone}">${ghgDelta.text}</span></td>
+                           <td class="projection-cell">${formatNumber(row.projectedComplianceBalanceT, 3)} <span class="projection-delta ${balanceDelta.tone}">${balanceDelta.text}</span></td>`
+                        : ""
+                    }
+                  </tr>
+                `;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
 function renderDashboard() {
   return `
+    ${renderProjectionPanel()}
     <section class="analytics-header">
       <div class="analytics-title">
         <h2>Visual Analytics</h2>
-        <span class="chip">4 charts</span>
+        <span class="chip">6 charts</span>
       </div>
       <p class="helper-text">Click any chart element to open its underlying table in the right pane.</p>
     </section>
@@ -699,7 +1039,27 @@ function renderDashboard() {
             </div>
             <div class="chart-canvas-wrap"><canvas id="costSplitChart"></canvas></div>
           </article>
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">Projection</p>
+                <h3>EUAs Actual vs Projected by Voyage</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="projectedEuaChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">Projection</p>
+                <h3>Compliance Balance Actual vs Projected</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="projectedBalanceChart"></canvas></div>
+          </article>
         </div>
+        ${renderProjectionVoyageTable()}
       </div>
       ${renderDrilldownPane()}
     </section>
@@ -712,11 +1072,14 @@ function renderDashboardCharts() {
   const dashboard = computeFilteredDashboard(activeRows);
   const voyageRows = dashboard.voyageRows.filter((row) => row.attainedGhgIntensity !== null);
   const euaTrendRows = dashboard.voyageRows.filter((row) => row.euasRequiredT !== null);
+  const projectedRows = getProjectionRows(dashboard.voyageRows);
 
   const vesselCanvas = document.getElementById("vesselEuaChart");
   const ghgCanvas = document.getElementById("voyageGhgChart");
   const voyageEuaCanvas = document.getElementById("voyageEuaChart");
   const costSplitCanvas = document.getElementById("costSplitChart");
+  const projectedEuaCanvas = document.getElementById("projectedEuaChart");
+  const projectedBalanceCanvas = document.getElementById("projectedBalanceChart");
 
   if (vesselCanvas) {
     stateStore.charts.vesselEua = new Chart(vesselCanvas, {
@@ -892,6 +1255,107 @@ function renderDashboardCharts() {
               formatNumber(row.euasRequiredT, 3),
               formatCurrency(row.euasCostEur),
             ])
+          );
+        },
+      },
+    });
+  }
+
+  if (projectedEuaCanvas) {
+    stateStore.charts.projectedEua = new Chart(projectedEuaCanvas, {
+      type: "bar",
+      data: {
+        labels: projectedRows.map((row) => row.recordId),
+        datasets: [
+          {
+            label: "Actual",
+            data: projectedRows.map((row) => row.euasRequiredT),
+            backgroundColor: "#4288d6",
+            borderRadius: 6,
+          },
+          {
+            label: "Projected",
+            data: projectedRows.map((row) => row.projectedEuasRequiredT),
+            backgroundColor: "#7f77dd",
+            borderRadius: 6,
+          },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        onClick: (_, elementsClicked) => {
+          if (!elementsClicked.length) return;
+          const index = elementsClicked[0].index;
+          const row = projectedRows[index];
+          openDrilldown(
+            `Actual vs projected EUAs ${row.recordId}`,
+            row.route,
+            ["Vessel", "Actual EUAs", "Projected EUAs", "Delta", "Actual Cost", "Projected Cost"],
+            [[
+              row.vesselName,
+              formatNumber(row.euasRequiredT, 3),
+              formatNumber(row.projectedEuasRequiredT, 3),
+              formatNumber(row.deltaEuasRequiredT, 3),
+              formatCurrency(row.euasCostEur),
+              formatCurrency(row.projectedEuasCostEur),
+            ]]
+          );
+        },
+      },
+    });
+  }
+
+  if (projectedBalanceCanvas) {
+    stateStore.charts.projectedBalance = new Chart(projectedBalanceCanvas, {
+      type: "line",
+      data: {
+        labels: projectedRows.map((row) => row.recordId),
+        datasets: [
+          {
+            label: "Actual",
+            data: projectedRows.map((row) => row.complianceBalanceT),
+            borderColor: "#2b8a3e",
+            backgroundColor: "#2b8a3e",
+            pointRadius: 4,
+            tension: 0.2,
+          },
+          {
+            label: "Projected",
+            data: projectedRows.map((row) => row.projectedComplianceBalanceT),
+            borderColor: "#7f77dd",
+            backgroundColor: "#7f77dd",
+            borderDash: [6, 6],
+            pointRadius: 3,
+            tension: 0.2,
+          },
+          {
+            label: "Zero reference",
+            data: projectedRows.map(() => 0),
+            borderColor: "rgba(24, 44, 77, 0.35)",
+            borderDash: [4, 4],
+            pointRadius: 0,
+            tension: 0,
+          },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        onClick: (_, elementsClicked) => {
+          if (!elementsClicked.length) return;
+          const index = elementsClicked[0].index;
+          const row = projectedRows[index];
+          openDrilldown(
+            `Balance projection ${row.recordId}`,
+            row.route,
+            ["Vessel", "Actual Balance", "Projected Balance", "Delta", "Actual GHG", "Projected GHG"],
+            [[
+              row.vesselName,
+              formatNumber(row.complianceBalanceT, 3),
+              formatNumber(row.projectedComplianceBalanceT, 3),
+              formatNumber(row.deltaComplianceBalanceT, 3),
+              formatNumber(row.attainedGhgIntensity, 3),
+              formatNumber(row.projectedAttainedGhgIntensity, 3),
+            ]]
           );
         },
       },
@@ -1315,6 +1779,33 @@ function deleteSheetRow(sheetKey, rowId) {
   recomputeAndRender();
 }
 
+function applyProjectionPreset(preset) {
+  const next = { ...PROJECTION_BASELINE };
+  if (preset === "wasp10") next.waspFactor = 0.85;
+  if (preset === "wasp20") next.waspFactor = 0.75;
+  if (preset === "bio10") next.bioBlend = 10;
+  if (preset === "bio20") next.bioBlend = 20;
+  if (preset === "rfnbo10") next.rfnboBlend = 10;
+  if (preset === "rfnbo20") next.rfnboBlend = 20;
+  if (preset === "combined") {
+    next.waspFactor = 0.80;
+    next.bioBlend = 20;
+    next.bioType = "HVO";
+    next.rfnboBlend = 10;
+    next.rfnboType = "e-diesel";
+  }
+  stateStore.ui.projection = next;
+  stateStore.ui.projectionPreset = preset;
+  render();
+}
+
+function updateProjectionField(key, rawValue) {
+  const numericKeys = new Set(["waspFactor", "bioBlend", "rfnboBlend"]);
+  stateStore.ui.projection[key] = numericKeys.has(key) ? Number(rawValue) : rawValue;
+  stateStore.ui.projectionPreset = "custom";
+  render();
+}
+
 function handleLibraryClick(event) {
   const actionTarget = event.target.closest("[data-action]");
   if (!actionTarget) return;
@@ -1408,12 +1899,29 @@ function handleMainClick(event) {
     return;
   }
 
+  if (action === "toggle-projection-panel") {
+    stateStore.ui.projectionOpen = !stateStore.ui.projectionOpen;
+    render();
+    return;
+  }
+
+  if (action === "apply-projection-preset") {
+    applyProjectionPreset(actionTarget.dataset.preset);
+    return;
+  }
+
   if (action === "open-kpi-drilldown") {
     openKpiDrilldown(actionTarget.dataset.kpi);
   }
 }
 
 function handleMainInput(event) {
+  const projectionKey = event.target.dataset.projectionKey;
+  if (projectionKey) {
+    updateProjectionField(projectionKey, event.target.value);
+    return;
+  }
+
   const calcCell = event.target.dataset.calcCell;
   if (calcCell) {
     updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value);
@@ -1444,6 +1952,7 @@ async function bootstrap() {
   elements.viewTabs.addEventListener("click", handleMainClick);
   elements.contentView.addEventListener("click", handleMainClick);
   elements.contentView.addEventListener("input", handleMainInput);
+  elements.contentView.addEventListener("change", handleMainInput);
   elements.vesselFilter.addEventListener("change", (event) => {
     stateStore.ui.vesselFilter = event.target.value;
     stateStore.ui.calculatorSelectedId = null;
@@ -1470,6 +1979,8 @@ async function bootstrap() {
     stateStore.state = deepClone(stateStore.seedState);
     stateStore.ui.calculatorSelectedId = null;
     stateStore.ui.drilldown = null;
+    stateStore.ui.projection = { ...PROJECTION_BASELINE };
+    stateStore.ui.projectionPreset = "baseline";
     recomputeAndRender();
   });
   elements.closeEditorButton.addEventListener("click", () => {
