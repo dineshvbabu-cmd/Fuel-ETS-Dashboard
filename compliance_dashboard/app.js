@@ -242,13 +242,13 @@ function buildDataLists() {
 
 function renderViewTabs() {
   elements.viewTabs.innerHTML = [
-    ["dashboard", "Dashboard"],
-    ["calculator", "Calculator"],
+    ["dashboard", "Dashboard", "tab-blue"],
+    ["calculator", "Voyage Inputs", "tab-amber"],
   ]
     .map(
-      ([key, label]) => `
+      ([key, label, tone]) => `
         <button
-          class="view-tab ${stateStore.ui.activeView === key ? "active" : ""}"
+          class="view-tab ${tone} ${stateStore.ui.activeView === key ? "active" : ""}"
           type="button"
           data-action="select-view"
           data-view="${key}"
@@ -1601,6 +1601,45 @@ function ensureCalculatorSelection() {
   return fallback || null;
 }
 
+function buildCalculatorRowForCurrentFilter() {
+  const row = blankCalculatorRow();
+  if (stateStore.ui.vesselFilter === "all") {
+    return row;
+  }
+
+  const vesselRows = stateStore.derived.calculatorRows.filter((item) => item.vesselName === stateStore.ui.vesselFilter);
+  const lastVesselRow = vesselRows[vesselRows.length - 1];
+  const sourceRow = stateStore.state.calculatorRows.find((item) => item.id === lastVesselRow?.id);
+
+  if (sourceRow?.imoNo) {
+    row.imoNo = sourceRow.imoNo;
+  }
+
+  if (sourceRow?.windFactor !== undefined && sourceRow?.windFactor !== null) {
+    row.windFactor = sourceRow.windFactor;
+  }
+
+  return row;
+}
+
+function insertCalculatorRow(row) {
+  if (stateStore.ui.vesselFilter === "all") {
+    stateStore.state.calculatorRows.unshift(row);
+    return;
+  }
+
+  const vesselRows = stateStore.derived.calculatorRows.filter((item) => item.vesselName === stateStore.ui.vesselFilter);
+  const lastVesselRow = vesselRows[vesselRows.length - 1];
+  const insertIndex = lastVesselRow ? stateStore.state.calculatorRows.findIndex((item) => item.id === lastVesselRow.id) : -1;
+
+  if (insertIndex === -1) {
+    stateStore.state.calculatorRows.unshift(row);
+    return;
+  }
+
+  stateStore.state.calculatorRows.splice(insertIndex + 1, 0, row);
+}
+
 function renderCalculator() {
   ensureCalculatorSelection();
   const searchTerm = lower(stateStore.ui.calculatorSearch);
@@ -1644,8 +1683,8 @@ function renderCalculator() {
     <section class="calculator-shell">
       <div class="calculator-toolbar">
         <div class="calculator-toolbar-copy">
-          <h2>Calculator</h2>
-          <p class="helper-text">Orange cells are editable inputs. Blue cells are workbook-driven outputs. Vessel detail columns stay frozen while you scroll across the calculation sheet.</p>
+          <h2>Voyage Inputs</h2>
+          <p class="helper-text">Orange cells are editable inputs. Blue cells are workbook-driven outputs. Vessel detail columns stay frozen while you scroll across the voyage input sheet.</p>
         </div>
         <div class="calculator-actions">
           <input
@@ -1655,13 +1694,13 @@ function renderCalculator() {
             value="${stateStore.ui.calculatorSearch}"
             placeholder="Search vessel, route, port, IMO, or fuel"
           >
-          <button class="inline-button" type="button" data-action="add-calculator-row">Add row</button>
+          <button class="inline-button button-amber" type="button" data-action="add-calculator-row">Add row</button>
         </div>
       </div>
 
       ${renderCollapsibleSection({
         action: "toggle-calculator",
-        title: `Calculator Workbook${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}`,
+        title: `Voyage Input Sheet${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}`,
         badges: `${renderSectionBadge(`${totalRows} rows`)}${renderSectionBadge(`${activeRows.length} active`, "purple")}`,
         note: "Collapse when you need a cleaner view",
         open: stateStore.ui.calculatorOpen,
@@ -1670,7 +1709,7 @@ function renderCalculator() {
         <div class="table-head">
           <div>
             <p class="eyebrow">Workbook Grid</p>
-            <h3>Calculator rows${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
+            <h3>Voyage input rows${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
           </div>
           <span class="chip">${totalRows} rows · ${activeRows.length} active records</span>
         </div>
@@ -2105,8 +2144,8 @@ function handleMainClick(event) {
   }
 
   if (action === "add-calculator-row") {
-    const row = blankCalculatorRow();
-    stateStore.state.calculatorRows.unshift(row);
+    const row = buildCalculatorRowForCurrentFilter();
+    insertCalculatorRow(row);
     stateStore.ui.calculatorSelectedId = row.id;
     recomputeAndRender();
     return;

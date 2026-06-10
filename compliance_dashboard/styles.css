@@ -173,6 +173,26 @@ h4 {
   border-color: transparent;
 }
 
+.view-tab.tab-blue {
+  background: rgba(66, 136, 214, 0.1);
+  border-color: rgba(66, 136, 214, 0.18);
+  color: #2c67a9;
+}
+
+.view-tab.tab-amber {
+  background: rgba(215, 138, 31, 0.12);
+  border-color: rgba(215, 138, 31, 0.2);
+  color: #a5660f;
+}
+
+.view-tab.tab-blue.active {
+  background: linear-gradient(135deg, #4288d6 0%, #2c67a9 100%);
+}
+
+.view-tab.tab-amber.active {
+  background: linear-gradient(135deg, #d78a1f 0%, #b46d0d 100%);
+}
+
 .icon-button {
   min-width: 40px;
   min-height: 40px;
@@ -201,6 +221,30 @@ h4 {
 
 .danger-button {
   background: linear-gradient(135deg, #cf5353 0%, #a93030 100%);
+}
+
+.button-violet {
+  background: linear-gradient(135deg, #8b7cff 0%, #6558d8 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+.button-green {
+  background: linear-gradient(135deg, #28a063 0%, #0d7a45 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+.button-red {
+  background: linear-gradient(135deg, #cf5353 0%, #a93030 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+.button-amber {
+  background: linear-gradient(135deg, #e9a23b 0%, #c97a12 100%);
+  border-color: transparent;
+  color: #fff;
 }
 
 .toolbar-field {
