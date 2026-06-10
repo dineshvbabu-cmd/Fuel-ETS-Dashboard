@@ -383,16 +383,19 @@ function calculateCalculatorRows(state, params, referenceMaps) {
     const vessel = referenceMaps.fleetByImo.get(imoKey);
     const fromPort = referenceMaps.portByCode.get(normalizeUpper(row.fromPortCode));
     const toPort = referenceMaps.portByCode.get(normalizeUpper(row.toPortCode));
-    const type =
+    const derivedType =
       !row.fromPortCode && !row.toPortCode
         ? ""
         : normalizeUpper(row.fromPortCode) === normalizeUpper(row.toPortCode)
           ? "Port Stay"
           : "Voyage";
 
-    const recordId = type && row.imoNo
+    const type = row.type === "Voyage" || row.type === "Port Stay" ? row.type : derivedType;
+
+    const generatedRecordId = type && row.imoNo
       ? `${type === "Port Stay" ? "P" : "V"}${String(++counters[type]).padStart(3, "0")}`
       : "";
+    const recordId = normalizeUpper(row.recordId) || generatedRecordId;
 
     const fromEu = fromPort?.euEeaInScope === "Yes";
     const toEu = toPort?.euEeaInScope === "Yes";
@@ -706,6 +709,8 @@ export function persistableState(state) {
 export function blankCalculatorRow() {
   return {
     id: `calc-${Date.now()}`,
+    recordId: "",
+    type: "Voyage",
     imoNo: null,
     departureDate: "",
     fromPortCode: "",

@@ -85,8 +85,8 @@ const numericColumns = {
 };
 
 const CALCULATOR_COLUMNS = [
-  { key: "recordId", label: "Voyage / Port-Stay ID", kind: "sticky", width: 110 },
-  { key: "type", label: "Type", kind: "sticky", width: 100 },
+  { key: "recordId", label: "Voyage / Port-Stay ID", kind: "sticky-editable", input: "text", width: 130, placeholder: "V001 / P001" },
+  { key: "type", label: "Type", kind: "sticky-editable", input: "select", width: 120, options: ["Voyage", "Port Stay"] },
   { key: "imoNo", label: "IMO No.", kind: "editable", input: "number", width: 110, list: "imoNumbers" },
   { key: "vesselName", label: "Vessel Name", kind: "sticky", width: 150 },
   { key: "shipType", label: "Ship Type", kind: "sticky", width: 150 },
@@ -762,16 +762,16 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
   const classes = ["calculator-cell"];
   const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
 
-  if (column.kind.startsWith("sticky")) {
+  if (column.kind.includes("sticky")) {
     classes.push("sticky-cell");
     styleParts.push(`left:${stickyLeft}px`);
   }
 
-  if (column.kind.startsWith("editable")) {
+  if (column.kind.includes("editable")) {
     classes.push("editable-cell");
   }
 
-  if (column.kind.startsWith("calculated")) {
+  if (column.kind.includes("calculated")) {
     classes.push("calculated-cell");
   }
 
@@ -787,7 +787,19 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
     `;
   }
 
-  if (column.kind.startsWith("editable")) {
+  if (column.kind.includes("editable")) {
+    if (column.input === "select") {
+      return `
+        <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
+          <select class="calculator-grid-input input-orange" data-calc-cell="${column.key}" data-row-id="${row.id}">
+            ${(column.options || [])
+              .map((option) => `<option value="${option}" ${calculatorInputValue(inputRow, column) === option ? "selected" : ""}>${option}</option>`)
+              .join("")}
+          </select>
+        </td>
+      `;
+    }
+
     return `
       <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
         <input
@@ -796,6 +808,7 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
           data-row-id="${row.id}"
           type="${column.input}"
           value="${calculatorInputValue(inputRow, column)}"
+          ${column.placeholder ? `placeholder="${column.placeholder}"` : ""}
           ${column.list ? `list="${column.list}"` : ""}
           ${column.step ? `step="${column.step}"` : ""}
         >
@@ -1777,8 +1790,21 @@ function ensureCalculatorSelection() {
   return fallback || null;
 }
 
+function nextRecordSerial(type) {
+  const prefix = type === "Port Stay" ? "P" : "V";
+  const values = stateStore.state.calculatorRows
+    .map((row) => String(row.recordId || "").trim().toUpperCase())
+    .filter((value) => value.startsWith(prefix))
+    .map((value) => Number(value.slice(1)))
+    .filter((value) => Number.isFinite(value));
+  const next = (values.length ? Math.max(...values) : 0) + 1;
+  return `${prefix}${String(next).padStart(3, "0")}`;
+}
+
 function buildCalculatorRowForCurrentFilter() {
   const row = blankCalculatorRow();
+  row.type = "Voyage";
+  row.recordId = nextRecordSerial(row.type);
   if (stateStore.ui.vesselFilter === "all") {
     return row;
   }
@@ -1793,6 +1819,11 @@ function buildCalculatorRowForCurrentFilter() {
 
   if (sourceRow?.windFactor !== undefined && sourceRow?.windFactor !== null) {
     row.windFactor = sourceRow.windFactor;
+  }
+
+  if (sourceRow?.type === "Voyage" || sourceRow?.type === "Port Stay") {
+    row.type = sourceRow.type;
+    row.recordId = nextRecordSerial(row.type);
   }
 
   return row;
@@ -1860,7 +1891,7 @@ function renderCalculator() {
       <div class="calculator-toolbar">
         <div class="calculator-toolbar-copy">
           <h2>Voyage Inputs</h2>
-          <p class="helper-text">Orange cells are editable inputs. Blue cells are workbook-driven outputs. Vessel detail columns stay frozen while you scroll across the voyage input sheet.</p>
+          <p class="helper-text">Orange cells are editable inputs, including manual voyage IDs and type. Blue cells are workbook-driven outputs. Changes autosave when you leave a field, and the dashboard recalculates automatically.</p>
         </div>
         <div class="calculator-actions">
           <input
@@ -1896,12 +1927,12 @@ function renderCalculator() {
                 ${CALCULATOR_COLUMNS.map((column) => {
                   const classes = ["calculator-header"];
                   const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
-                  if (column.kind.startsWith("sticky")) {
+                  if (column.kind.includes("sticky")) {
                     classes.push("sticky-header");
                     styleParts.push(`left:${stickyOffsets.get(column.key) || 0}px`);
-                  } else if (column.kind.startsWith("editable")) {
+                  } else if (column.kind.includes("editable")) {
                     classes.push("editable-header");
-                  } else if (column.kind.startsWith("calculated")) {
+                  } else if (column.kind.includes("calculated")) {
                     classes.push("calculated-header");
                   } else if (column.kind === "actions") {
                     classes.push("actions-header");
@@ -2135,26 +2166,11 @@ function exportFilteredData() {
 function updateCalculatorField(field, rawValue) {
   const row = stateStore.state.calculatorRows.find((item) => item.id === stateStore.ui.calculatorSelectedId);
   if (!row) return;
-  const numericKeys = new Set([
-    "imoNo",
-    "fuel1ConsumptionMt",
-    "fuel2ConsumptionMt",
-    "bioFuelConsumptionMt",
-    "sustainabilityFactor",
-    "windFactor",
-    "distanceNm",
-    "cargoTonnes",
-    "timeAtSeaHours",
-    "berthHours",
-    "opsElectricityMj",
-  ]);
-  row[field] = numericKeys.has(field) ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
+  setCalculatorRowValue(row, field, rawValue);
   recomputeAndRender();
 }
 
-function updateCalculatorCell(rowId, field, rawValue) {
-  const row = stateStore.state.calculatorRows.find((item) => item.id === rowId);
-  if (!row) return;
+function setCalculatorRowValue(row, field, rawValue) {
   const numericKeys = new Set([
     "imoNo",
     "fuel1ConsumptionMt",
@@ -2169,8 +2185,16 @@ function updateCalculatorCell(rowId, field, rawValue) {
     "opsElectricityMj",
   ]);
   row[field] = numericKeys.has(field) ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
+}
+
+function updateCalculatorCell(rowId, field, rawValue, commit = true) {
+  const row = stateStore.state.calculatorRows.find((item) => item.id === rowId);
+  if (!row) return;
+  setCalculatorRowValue(row, field, rawValue);
   stateStore.ui.calculatorSelectedId = rowId;
-  recomputeAndRender();
+  if (commit) {
+    recomputeAndRender();
+  }
 }
 
 function openEditorDialog(sheetKey, rowId) {
@@ -2423,12 +2447,23 @@ function handleMainInput(event) {
 
   const calcCell = event.target.dataset.calcCell;
   if (calcCell) {
-    updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value);
+    if (event.type === "input") {
+      updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, false);
+      return;
+    }
+    updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, true);
     return;
   }
 
   const calcField = event.target.dataset.calcField;
   if (calcField) {
+    if (event.type === "input") {
+      const row = stateStore.state.calculatorRows.find((item) => item.id === stateStore.ui.calculatorSelectedId);
+      if (row) {
+        setCalculatorRowValue(row, calcField, event.target.value);
+      }
+      return;
+    }
     updateCalculatorField(calcField, event.target.value);
     return;
   }
