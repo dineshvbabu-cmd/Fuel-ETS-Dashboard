@@ -2,7 +2,6 @@ import {
   STORAGE_KEY,
   SHEETS,
   SHEET_COLUMNS,
-  CALCULATOR_FIELD_GROUPS,
   blankCalculatorRow,
   blankRowForSheet,
   createStateFromSeed,
@@ -63,6 +62,54 @@ const numericColumns = {
   fleet: new Set(["imoNo", "gt", "nt", "summerDwt", "built"]),
   derogations: new Set(["serialNo"]),
 };
+
+const CALCULATOR_COLUMNS = [
+  { key: "recordId", label: "Voyage / Port-Stay ID", kind: "sticky", width: 110 },
+  { key: "type", label: "Type", kind: "sticky", width: 100 },
+  { key: "imoNo", label: "IMO No.", kind: "editable", input: "number", width: 110, list: "imoNumbers" },
+  { key: "vesselName", label: "Vessel Name", kind: "sticky", width: 150 },
+  { key: "shipType", label: "Ship Type", kind: "sticky", width: 150 },
+  { key: "flagState", label: "Flag State", kind: "sticky", width: 120 },
+  { key: "deadweightTonnes", label: "Deadweight (DWT, t)", kind: "sticky-number", width: 125, digits: 0 },
+  { key: "netTonnage", label: "Net Tonnage (NT)", kind: "sticky-number", width: 120, digits: 0 },
+  { key: "grossTonnage", label: "Gross Tonnage (GT)", kind: "sticky-number", width: 120, digits: 0 },
+  { key: "departureDate", label: "Departure Date", kind: "editable", input: "date", width: 120 },
+  { key: "fromPortCode", label: "From Port UN/LOCODE", kind: "editable", input: "text", width: 130, list: "portCodes" },
+  { key: "fromPortName", label: "From Port Name", kind: "calculated", width: 150 },
+  { key: "arrivalDate", label: "Arrival Date", kind: "editable", input: "date", width: 120 },
+  { key: "toPortCode", label: "To Port UN/LOCODE", kind: "editable", input: "text", width: 130, list: "portCodes" },
+  { key: "toPortName", label: "To Port Name", kind: "calculated", width: 150 },
+  { key: "fuel1Type", label: "Fossil Fuel 1 Type", kind: "editable", input: "text", width: 130, list: "fuelTypes" },
+  { key: "fuel1ConsumptionMt", label: "Fossil Fuel 1 Cons. (MT)", kind: "editable-number", input: "number", width: 130, digits: 2, step: "0.0001" },
+  { key: "fuel2Type", label: "Fossil Fuel 2 Type", kind: "editable", input: "text", width: 130, list: "fuelTypes" },
+  { key: "fuel2ConsumptionMt", label: "Fossil Fuel 2 Cons. (MT)", kind: "editable-number", input: "number", width: 130, digits: 2, step: "0.0001" },
+  { key: "bioFuelType", label: "Biofuel / RFNBO Type", kind: "editable", input: "text", width: 140, list: "fuelTypes" },
+  { key: "bioFuelConsumptionMt", label: "Biofuel / RFNBO Cons. (MT)", kind: "editable-number", input: "number", width: 140, digits: 2, step: "0.0001" },
+  { key: "sustainabilityFactor", label: "Sustain. Factor WtW", kind: "editable-number", input: "number", width: 120, digits: 2, step: "0.01" },
+  { key: "windFactor", label: "WASP Factor", kind: "editable-number", input: "number", width: 110, digits: 2, step: "0.01" },
+  { key: "distanceNm", label: "Total Distance (nm)", kind: "editable-number", input: "number", width: 120, digits: 0, step: "0.01" },
+  { key: "cargoTonnes", label: "Cargo Carried (t)", kind: "editable-number", input: "number", width: 120, digits: 0, step: "0.01" },
+  { key: "timeAtSeaHours", label: "Time at Sea (h)", kind: "editable-number", input: "number", width: 120, digits: 1, step: "0.01" },
+  { key: "berthHours", label: "Hours at Berth / Anchor", kind: "editable-number", input: "number", width: 130, digits: 1, step: "0.01" },
+  { key: "opsElectricityMj", label: "OPS Electricity (MJ)", kind: "editable-number", input: "number", width: 130, digits: 0, step: "0.01" },
+  { key: "fromEuEea", label: "From EU/EEA?", kind: "calculated", width: 100 },
+  { key: "toEuEea", label: "To EU/EEA?", kind: "calculated", width: 100 },
+  { key: "omrInvolved", label: "OMR Involved?", kind: "calculated", width: 110 },
+  { key: "scopePercent", label: "Scope / Leg %", kind: "calculated-percent", width: 100 },
+  { key: "scopeNote", label: "Derogation / Scope Note", kind: "calculated", width: 220 },
+  { key: "totalEnergyMj", label: "Total Energy (MJ)", kind: "calculated-number", width: 130, digits: 0 },
+  { key: "inScopeEnergyMj", label: "In-Scope Energy (MJ)", kind: "calculated-number", width: 130, digits: 0 },
+  { key: "transportWork", label: "Transport Work", kind: "calculated-number", width: 130, digits: 0 },
+  { key: "etsInScopeCo2eqT", label: "ETS In-Scope CO2eq (t)", kind: "calculated-number", width: 135, digits: 3 },
+  { key: "euasRequiredT", label: "EUAs Required (t)", kind: "calculated-number", width: 120, digits: 3 },
+  { key: "euasCostEur", label: "EUAs Cost (EUR)", kind: "calculated-currency", width: 125 },
+  { key: "attainedGhgIntensity", label: "Attained GHG Intensity", kind: "calculated-number", width: 135, digits: 3 },
+  { key: "targetGhgIntensity", label: "Target GHG Intensity", kind: "calculated-number", width: 130, digits: 3 },
+  { key: "complianceBalanceT", label: "Compliance Balance (t)", kind: "calculated-number", width: 140, digits: 3 },
+  { key: "fuelEuPenaltyEur", label: "FuelEU Penalty (EUR)", kind: "calculated-currency", width: 135 },
+  { key: "eeoi", label: "EEOI", kind: "calculated-number", width: 100, digits: 3 },
+  { key: "rowActions", label: "Actions", kind: "actions", width: 100 },
+];
 
 function formatNumber(value, digits = 2) {
   if (value === null || value === undefined || value === "") {
@@ -327,6 +374,80 @@ function toneClass(value) {
   if (value > 0) return "tag-good";
   if (value < 0) return "tag-risk";
   return "muted";
+}
+
+function calculatorCellValue(row, column) {
+  const value = row[column.key];
+  if (column.kind === "calculated-currency") {
+    return formatCurrency(value);
+  }
+  if (column.kind === "calculated-percent") {
+    return formatPercent(value);
+  }
+  if (column.kind === "calculated-number" || column.kind === "sticky-number") {
+    return formatNumber(value, column.digits ?? 2);
+  }
+  if (column.kind === "editable-number") {
+    return value ?? "";
+  }
+  return value ?? "";
+}
+
+function calculatorInputValue(row, column) {
+  const value = row[column.key];
+  return value ?? "";
+}
+
+function renderCalculatorCell(row, inputRow, column, stickyLeft) {
+  const classes = ["calculator-cell"];
+  const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
+
+  if (column.kind.startsWith("sticky")) {
+    classes.push("sticky-cell");
+    styleParts.push(`left:${stickyLeft}px`);
+  }
+
+  if (column.kind.startsWith("editable")) {
+    classes.push("editable-cell");
+  }
+
+  if (column.kind.startsWith("calculated")) {
+    classes.push("calculated-cell");
+  }
+
+  if (column.kind.includes("number") || column.kind.includes("currency") || column.key === "rowActions") {
+    classes.push("number-cell");
+  }
+
+  if (column.key === "rowActions") {
+    return `
+      <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
+        <button class="inline-button compact-button" type="button" data-action="delete-calculator-row" data-row-id="${row.id}">Delete</button>
+      </td>
+    `;
+  }
+
+  if (column.kind.startsWith("editable")) {
+    return `
+      <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
+        <input
+          class="calculator-grid-input input-orange"
+          data-calc-cell="${column.key}"
+          data-row-id="${row.id}"
+          type="${column.input}"
+          value="${calculatorInputValue(inputRow, column)}"
+          ${column.list ? `list="${column.list}"` : ""}
+          ${column.step ? `step="${column.step}"` : ""}
+        >
+      </td>
+    `;
+  }
+
+  return `
+    <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
+      ${calculatorCellValue(row, column)}
+    </td>
+  `;
 }
 
 function openDrilldown(title, subtitle, columns, rows) {
@@ -766,32 +887,12 @@ function renderDashboardCharts() {
 }
 
 function ensureCalculatorSelection() {
-  const activeRows = getActiveRows();
-  const rows = activeRows.length ? activeRows : stateStore.derived.calculatorRows;
+  const rows = stateStore.derived.calculatorRows;
   const selected = rows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
   if (selected) return selected;
   const fallback = rows.find((row) => row.recordId) || rows[0];
   stateStore.ui.calculatorSelectedId = fallback?.id || null;
   return fallback || null;
-}
-
-function renderCalculatorField(field, row) {
-  const value = row[field.key] ?? "";
-  return `
-    <div class="field">
-      <label for="calc-${field.key}">${field.label}</label>
-      <input
-        id="calc-${field.key}"
-        class="calculator-input input-orange"
-        data-calc-field="${field.key}"
-        type="${field.type}"
-        value="${value}"
-        ${field.list ? `list="${field.list}"` : ""}
-        ${field.step ? `step="${field.step}"` : ""}
-      >
-      ${field.hint ? `<div class="helper-text">${field.hint}</div>` : ""}
-    </div>
-  `;
 }
 
 function renderCalculator() {
@@ -936,6 +1037,112 @@ function renderCalculator() {
   `;
 }
 
+function renderCalculator() {
+  ensureCalculatorSelection();
+  const searchTerm = lower(stateStore.ui.calculatorSearch);
+  const filteredRows = stateStore.derived.calculatorRows.filter((row) => {
+    if (stateStore.ui.vesselFilter !== "all" && row.vesselName !== stateStore.ui.vesselFilter) {
+      return false;
+    }
+    if (!searchTerm) return true;
+    return [
+      row.recordId,
+      row.vesselName,
+      row.route,
+      row.shipType,
+      row.flagState,
+      row.fromPortName,
+      row.toPortName,
+      row.fromPortCode,
+      row.toPortCode,
+      row.fuel1Type,
+      row.fuel2Type,
+      row.bioFuelType,
+      row.type,
+      row.imoNo,
+    ]
+      .filter(Boolean)
+      .some((value) => lower(value).includes(searchTerm));
+  });
+
+  const stickyColumns = CALCULATOR_COLUMNS.filter((column) => column.kind.startsWith("sticky"));
+  let stickyOffset = 0;
+  const stickyOffsets = new Map();
+  stickyColumns.forEach((column) => {
+    stickyOffsets.set(column.key, stickyOffset);
+    stickyOffset += column.width;
+  });
+
+  const totalRows = filteredRows.length;
+  const activeRows = filteredRows.filter((row) => row.recordId);
+
+  return `
+    <section class="calculator-shell">
+      <div class="calculator-toolbar">
+        <div class="calculator-toolbar-copy">
+          <h2>Calculator</h2>
+          <p class="helper-text">Orange cells are editable inputs. Blue cells are workbook-driven outputs. Vessel detail columns stay frozen while you scroll across the calculation sheet.</p>
+        </div>
+        <div class="calculator-actions">
+          <input
+            class="search-input"
+            type="search"
+            data-action="calculator-search"
+            value="${stateStore.ui.calculatorSearch}"
+            placeholder="Search vessel, route, port, IMO, or fuel"
+          >
+          <button class="inline-button" type="button" data-action="add-calculator-row">Add row</button>
+        </div>
+      </div>
+
+      <article class="table-card">
+        <div class="table-head">
+          <div>
+            <p class="eyebrow">Workbook Grid</p>
+            <h3>Calculator rows${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
+          </div>
+          <span class="chip">${totalRows} rows · ${activeRows.length} active records</span>
+        </div>
+        <div class="calculator-table-wrap">
+          <table class="calculator-table">
+            <thead>
+              <tr>
+                ${CALCULATOR_COLUMNS.map((column) => {
+                  const classes = ["calculator-header"];
+                  const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
+                  if (column.kind.startsWith("sticky")) {
+                    classes.push("sticky-header");
+                    styleParts.push(`left:${stickyOffsets.get(column.key) || 0}px`);
+                  } else if (column.kind.startsWith("editable")) {
+                    classes.push("editable-header");
+                  } else if (column.kind.startsWith("calculated")) {
+                    classes.push("calculated-header");
+                  } else if (column.kind === "actions") {
+                    classes.push("actions-header");
+                  }
+                  return `<th class="${classes.join(" ")}" style="${styleParts.join(";")}">${column.label}</th>`;
+                }).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredRows
+                .map((row) => {
+                  const inputRow = stateStore.state.calculatorRows.find((item) => item.id === row.id) || blankCalculatorRow();
+                  return `
+                    <tr class="${row.id === stateStore.ui.calculatorSelectedId ? "selected-row" : ""}" data-action="select-calculator-row" data-row-id="${row.id}">
+                      ${CALCULATOR_COLUMNS.map((column) => renderCalculatorCell(row, inputRow, column, stickyOffsets.get(column.key) || 0)).join("")}
+                    </tr>
+                  `;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
 function getSheetRowsForDisplay(sheetKey) {
   if (sheetKey === "fuelReference") {
     return stateStore.derived.fuelReference;
@@ -1049,7 +1256,13 @@ function renderLibraryDrawer() {
 function render() {
   renderViewTabs();
   renderVesselFilter();
-  renderKpis();
+  if (stateStore.ui.activeView === "dashboard") {
+    elements.kpiGrid.classList.remove("hidden");
+    renderKpis();
+  } else {
+    elements.kpiGrid.classList.add("hidden");
+    elements.kpiGrid.innerHTML = "";
+  }
   buildDataLists();
   renderContent();
   renderLibraryDrawer();
@@ -1126,6 +1339,27 @@ function updateCalculatorField(field, rawValue) {
     "opsElectricityMj",
   ]);
   row[field] = numericKeys.has(field) ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
+  recomputeAndRender();
+}
+
+function updateCalculatorCell(rowId, field, rawValue) {
+  const row = stateStore.state.calculatorRows.find((item) => item.id === rowId);
+  if (!row) return;
+  const numericKeys = new Set([
+    "imoNo",
+    "fuel1ConsumptionMt",
+    "fuel2ConsumptionMt",
+    "bioFuelConsumptionMt",
+    "sustainabilityFactor",
+    "windFactor",
+    "distanceNm",
+    "cargoTonnes",
+    "timeAtSeaHours",
+    "berthHours",
+    "opsElectricityMj",
+  ]);
+  row[field] = numericKeys.has(field) ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
+  stateStore.ui.calculatorSelectedId = rowId;
   recomputeAndRender();
 }
 
@@ -1289,7 +1523,8 @@ function handleMainClick(event) {
   }
 
   if (action === "delete-calculator-row") {
-    const index = stateStore.state.calculatorRows.findIndex((row) => row.id === stateStore.ui.calculatorSelectedId);
+    const targetRowId = rowId || stateStore.ui.calculatorSelectedId;
+    const index = stateStore.state.calculatorRows.findIndex((row) => row.id === targetRowId);
     if (index === -1) return;
     stateStore.state.calculatorRows.splice(index, 1);
     stateStore.ui.calculatorSelectedId = null;
@@ -1308,6 +1543,12 @@ function handleMainClick(event) {
 }
 
 function handleMainInput(event) {
+  const calcCell = event.target.dataset.calcCell;
+  if (calcCell) {
+    updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value);
+    return;
+  }
+
   const calcField = event.target.dataset.calcField;
   if (calcField) {
     updateCalculatorField(calcField, event.target.value);
