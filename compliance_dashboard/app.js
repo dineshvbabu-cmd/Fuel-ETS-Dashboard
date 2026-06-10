@@ -61,7 +61,11 @@ const stateStore = {
     libraryPage: 1,
     dialog: null,
     drilldown: null,
+    kpisOpen: true,
     projectionOpen: true,
+    chartsOpen: true,
+    voyageTableOpen: true,
+    calculatorOpen: true,
     projectionPreset: "baseline",
     projection: { ...PROJECTION_BASELINE },
   },
@@ -346,6 +350,30 @@ function formatDelta(value, digits = 1, unit = "", lowerIsBetter = true) {
   };
 }
 
+function renderSectionBadge(label, tone = "dark") {
+  return `<span class="section-badge ${tone}">${label}</span>`;
+}
+
+function renderCollapsibleSection({ action, title, badges = "", note = "", open = true, body = "" }) {
+  return `
+    <section class="compact-section">
+      <button class="section-bar" type="button" data-action="${action}" aria-expanded="${open}">
+        <span class="section-bar-main">
+          <span class="section-chevron ${open ? "open" : ""}">⌄</span>
+          <span class="section-title-group">
+            <strong>${title}</strong>
+            <span class="section-badges">${badges}</span>
+          </span>
+        </span>
+        ${note ? `<span class="section-bar-note">${note}</span>` : ""}
+      </button>
+      <div class="section-body ${open ? "" : "collapsed"}">
+        ${body}
+      </div>
+    </section>
+  `;
+}
+
 function getProjectionRows(activeRows) {
   const scenario = stateStore.ui.projection;
   const params = stateStore.derived.parameterValues;
@@ -522,7 +550,7 @@ function renderKpis() {
     },
   ];
 
-  elements.kpiGrid.innerHTML = cards
+  const cardsHtml = cards
     .map(
       (card) => `
         <button class="kpi-card tone-${card.tone}" type="button" data-action="open-kpi-drilldown" data-kpi="${card.key}">
@@ -539,6 +567,15 @@ function renderKpis() {
       `
     )
     .join("");
+
+  elements.kpiGrid.innerHTML = renderCollapsibleSection({
+    action: "toggle-kpis",
+    title: "Key Performance Indicators",
+    badges: `${renderSectionBadge("8 metrics")}${showProjection ? renderSectionBadge("Projection active", "purple") : ""}`,
+    note: "Click any card to drill into records",
+    open: stateStore.ui.kpisOpen,
+    body: `<div class="metrics-grid">${cardsHtml}</div>`,
+  });
 }
 
 function toneClass(value) {
@@ -932,74 +969,73 @@ function renderProjectionPanel() {
 function renderProjectionVoyageTable() {
   const projectedRows = getProjectionRows(getActiveRows().filter((row) => row.type === "Voyage"));
   const showProjection = projectionIsActive();
-  return `
-    <article class="table-card">
-      <div class="table-head">
-        <div>
-          <p class="eyebrow">Voyage Table</p>
-          <h3>Actual and projected compliance by voyage</h3>
+  return renderCollapsibleSection({
+    action: "toggle-voyage-table",
+    title: "Voyage Results Table",
+    badges: `${renderSectionBadge(`${projectedRows.length} voyages`)}${showProjection ? renderSectionBadge("Projected columns", "purple") : ""}`,
+    note: "Collapse when you want more chart space",
+    open: stateStore.ui.voyageTableOpen,
+    body: `
+      <article class="table-card compact-table-card">
+        <div class="table-wrap dense-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Record</th>
+                <th>Vessel</th>
+                <th>Route</th>
+                <th>EUAs</th>
+                <th>GHG</th>
+                <th>Balance</th>
+                ${showProjection ? `<th class="projection-col-head">Proj EUAs</th><th class="projection-col-head">Proj GHG</th><th class="projection-col-head">Proj Balance</th>` : ""}
+              </tr>
+            </thead>
+            <tbody>
+              ${projectedRows
+                .map((row) => {
+                  const euaDelta = formatDelta(row.deltaEuasRequiredT, 2, "", true);
+                  const ghgDelta = formatDelta(row.deltaAttainedGhgIntensity, 2, "", true);
+                  const balanceDelta = formatDelta(row.deltaComplianceBalanceT, 2, "", false);
+                  return `
+                    <tr>
+                      <td>${row.recordId}</td>
+                      <td>${row.vesselName}</td>
+                      <td>${row.route}</td>
+                      <td>${formatNumber(row.euasRequiredT, 3)}</td>
+                      <td>${formatNumber(row.attainedGhgIntensity, 3)}</td>
+                      <td class="${toneClass(row.complianceBalanceT || 0)}">${formatNumber(row.complianceBalanceT, 3)}</td>
+                      ${
+                        showProjection
+                          ? `<td class="projection-cell">${formatNumber(row.projectedEuasRequiredT, 3)} <span class="projection-delta ${euaDelta.tone}">${euaDelta.text}</span></td>
+                             <td class="projection-cell">${formatNumber(row.projectedAttainedGhgIntensity, 3)} <span class="projection-delta ${ghgDelta.tone}">${ghgDelta.text}</span></td>
+                             <td class="projection-cell">${formatNumber(row.projectedComplianceBalanceT, 3)} <span class="projection-delta ${balanceDelta.tone}">${balanceDelta.text}</span></td>`
+                          : ""
+                      }
+                    </tr>
+                  `;
+                })
+                .join("")}
+            </tbody>
+          </table>
         </div>
-        <span class="chip">${projectedRows.length} voyages</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Record</th>
-              <th>Vessel</th>
-              <th>Route</th>
-              <th>EUAs</th>
-              <th>GHG</th>
-              <th>Balance</th>
-              ${showProjection ? `<th class="projection-col-head">Proj EUAs</th><th class="projection-col-head">Proj GHG</th><th class="projection-col-head">Proj Balance</th>` : ""}
-            </tr>
-          </thead>
-          <tbody>
-            ${projectedRows
-              .map((row) => {
-                const euaDelta = formatDelta(row.deltaEuasRequiredT, 2, "", true);
-                const ghgDelta = formatDelta(row.deltaAttainedGhgIntensity, 2, "", true);
-                const balanceDelta = formatDelta(row.deltaComplianceBalanceT, 2, "", false);
-                return `
-                  <tr>
-                    <td>${row.recordId}</td>
-                    <td>${row.vesselName}</td>
-                    <td>${row.route}</td>
-                    <td>${formatNumber(row.euasRequiredT, 3)}</td>
-                    <td>${formatNumber(row.attainedGhgIntensity, 3)}</td>
-                    <td class="${toneClass(row.complianceBalanceT || 0)}">${formatNumber(row.complianceBalanceT, 3)}</td>
-                    ${
-                      showProjection
-                        ? `<td class="projection-cell">${formatNumber(row.projectedEuasRequiredT, 3)} <span class="projection-delta ${euaDelta.tone}">${euaDelta.text}</span></td>
-                           <td class="projection-cell">${formatNumber(row.projectedAttainedGhgIntensity, 3)} <span class="projection-delta ${ghgDelta.tone}">${ghgDelta.text}</span></td>
-                           <td class="projection-cell">${formatNumber(row.projectedComplianceBalanceT, 3)} <span class="projection-delta ${balanceDelta.tone}">${balanceDelta.text}</span></td>`
-                        : ""
-                    }
-                  </tr>
-                `;
-              })
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </article>
-  `;
+      </article>
+    `,
+  });
 }
 
 function renderDashboard() {
   return `
     ${renderProjectionPanel()}
-    <section class="analytics-header">
-      <div class="analytics-title">
-        <h2>Visual Analytics</h2>
-        <span class="chip">6 charts</span>
-      </div>
-      <p class="helper-text">Click any chart element to open its underlying table in the right pane.</p>
-    </section>
-
     <section class="dashboard-layout">
       <div class="dashboard-main">
-        <div class="chart-grid">
+        ${renderCollapsibleSection({
+          action: "toggle-charts",
+          title: "Visual Analytics",
+          badges: renderSectionBadge("6 charts"),
+          note: "Collapse when you need more space",
+          open: stateStore.ui.chartsOpen,
+          body: `
+            <div class="chart-grid">
           <article class="chart-card">
             <div class="table-head">
               <div>
@@ -1058,7 +1094,9 @@ function renderDashboard() {
             </div>
             <div class="chart-canvas-wrap"><canvas id="projectedBalanceChart"></canvas></div>
           </article>
-        </div>
+            </div>
+          `,
+        })}
         ${renderProjectionVoyageTable()}
       </div>
       ${renderDrilldownPane()}
@@ -1430,7 +1468,14 @@ function renderCalculator() {
         </div>
       </div>
 
-      <article class="table-card">
+      ${renderCollapsibleSection({
+        action: "toggle-calculator",
+        title: `Calculator Workbook${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}`,
+        badges: `${renderSectionBadge(`${totalRows} rows`)}${renderSectionBadge(`${activeRows.length} active`, "purple")}`,
+        note: "Collapse when you need a cleaner view",
+        open: stateStore.ui.calculatorOpen,
+        body: `
+          <article class="table-card compact-table-card">
         <div class="table-head">
           <div>
             <p class="eyebrow">Workbook Grid</p>
@@ -1473,7 +1518,9 @@ function renderCalculator() {
             </tbody>
           </table>
         </div>
-      </article>
+          </article>
+        `,
+      })}
     </section>
   `;
 }
@@ -1901,6 +1948,30 @@ function handleMainClick(event) {
 
   if (action === "toggle-projection-panel") {
     stateStore.ui.projectionOpen = !stateStore.ui.projectionOpen;
+    render();
+    return;
+  }
+
+  if (action === "toggle-kpis") {
+    stateStore.ui.kpisOpen = !stateStore.ui.kpisOpen;
+    render();
+    return;
+  }
+
+  if (action === "toggle-charts") {
+    stateStore.ui.chartsOpen = !stateStore.ui.chartsOpen;
+    render();
+    return;
+  }
+
+  if (action === "toggle-voyage-table") {
+    stateStore.ui.voyageTableOpen = !stateStore.ui.voyageTableOpen;
+    render();
+    return;
+  }
+
+  if (action === "toggle-calculator") {
+    stateStore.ui.calculatorOpen = !stateStore.ui.calculatorOpen;
     render();
     return;
   }
