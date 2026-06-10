@@ -60,6 +60,8 @@ const stateStore = {
     activeView: "dashboard",
     vesselFilter: "all",
     calculatorSearch: "",
+    calculatorColumnMenuOpen: false,
+    calculatorVisibleColumns: [],
     detailSearch: "",
     detailScope: "all",
     calculatorSelectedId: null,
@@ -244,6 +246,8 @@ const CALCULATOR_MANUAL_VALUE_KEYS = [
   "opsElectricityMj",
 ];
 
+const DEFAULT_CALCULATOR_VISIBLE_COLUMNS = CALCULATOR_COLUMNS.filter((column) => column.key !== "rowActions").map((column) => column.key);
+
 function formatNumber(value, digits = 2) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -338,6 +342,33 @@ function getMeaningfulDerivedRows() {
 
 function countRowsForYear(year) {
   return stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row) && resolveRowStorageYear(row) === year).length;
+}
+
+function getVisibleCalculatorColumnKeys() {
+  const selected = Array.isArray(stateStore.ui.calculatorVisibleColumns) && stateStore.ui.calculatorVisibleColumns.length
+    ? stateStore.ui.calculatorVisibleColumns
+    : DEFAULT_CALCULATOR_VISIBLE_COLUMNS;
+  const ordered = CALCULATOR_COLUMNS.map((column) => column.key).filter((key) => key === "rowActions" || selected.includes(key));
+  return ordered.includes("rowActions") ? ordered : [...ordered, "rowActions"];
+}
+
+function getVisibleCalculatorColumns() {
+  const keys = getVisibleCalculatorColumnKeys();
+  return CALCULATOR_COLUMNS.filter((column) => keys.includes(column.key));
+}
+
+function estimateCalculatorColumnWidth(column, row, inputRow) {
+  if (column.key === "rowActions") {
+    return 110;
+  }
+  const displayValue = column.kind.includes("editable")
+    ? String(calculatorInputValue(inputRow, row, column) ?? "")
+    : String(calculatorCellValue(row, column) ?? "");
+  const sourceLength = Math.max(column.label.length, displayValue.length, column.placeholder?.length || 0);
+  const charWidth = column.kind.includes("editable") ? 8.1 : 7.6;
+  const minWidth = Math.min(column.width || 100, 120);
+  const maxWidth = column.kind.includes("calculated") ? 240 : 220;
+  return Math.max(minWidth, Math.min(maxWidth, Math.round(sourceLength * charWidth + 34)));
 }
 
 function syncCalculatorDraftRowsWithDerived() {
@@ -1360,7 +1391,7 @@ function renderUnifiedDetailSection() {
     note: "Charts, KPI clicks, and search all feed this one section",
     open: stateStore.ui.voyageTableOpen,
     body: `
-      <article class="table-card compact-table-card">
+      <article class="table-card compact-table-card detail-table-card">
         <div class="table-head detail-table-head">
           <div>
             <p class="eyebrow">Unified Detail View</p>
@@ -2135,12 +2166,17 @@ function renderCalculator() {
     stateStore.ui.calculatorSelectedId = focusedRow.id;
   }
 
-  const stickyColumns = CALCULATOR_COLUMNS.filter((column) => column.kind.startsWith("sticky"));
+  const visibleColumns = getVisibleCalculatorColumns();
+  const focusedInputRow = focusedRow ? stateStore.state.calculatorRows.find((item) => item.id === focusedRow.id) || blankCalculatorRow() : blankCalculatorRow();
+  const computedWidths = new Map(
+    visibleColumns.map((column) => [column.key, focusedRow ? estimateCalculatorColumnWidth(column, focusedRow, focusedInputRow) : (column.width || 120)])
+  );
+  const stickyColumns = visibleColumns.filter((column) => column.kind.startsWith("sticky"));
   let stickyOffset = 0;
   const stickyOffsets = new Map();
   stickyColumns.forEach((column) => {
     stickyOffsets.set(column.key, stickyOffset);
-    stickyOffset += column.width;
+    stickyOffset += computedWidths.get(column.key) || column.width || 120;
   });
 
   const totalRows = filteredRows.length;
@@ -2161,6 +2197,34 @@ function renderCalculator() {
             value="${stateStore.ui.calculatorSearch}"
             placeholder="Search vessel, route, port, IMO, or fuel"
           >
+          <div class="calculator-column-picker">
+            <button class="inline-button" type="button" data-action="toggle-calculator-columns">Columns</button>
+            ${
+              stateStore.ui.calculatorColumnMenuOpen
+                ? `
+                  <div class="calculator-column-menu">
+                    <div class="calculator-column-menu-head">
+                      <strong>Choose visible columns</strong>
+                      <button class="inline-button compact-button" type="button" data-action="reset-calculator-columns">Show all</button>
+                    </div>
+                    <div class="calculator-column-list">
+                      ${CALCULATOR_COLUMNS.filter((column) => column.key !== "rowActions")
+                        .map((column) => {
+                          const checked = getVisibleCalculatorColumnKeys().includes(column.key) ? "checked" : "";
+                          return `
+                            <label class="calculator-column-option">
+                              <input type="checkbox" data-action="toggle-calculator-column" data-column-key="${column.key}" ${checked}>
+                              <span>${column.label}</span>
+                            </label>
+                          `;
+                        })
+                        .join("")}
+                    </div>
+                  </div>
+                `
+                : ""
+            }
+          </div>
           <button class="inline-button button-amber" type="button" data-action="add-calculator-row">Add row</button>
         </div>
       </div>
@@ -2185,9 +2249,10 @@ function renderCalculator() {
           <table class="calculator-table">
             <thead>
               <tr>
-                ${CALCULATOR_COLUMNS.map((column) => {
+                ${visibleColumns.map((column) => {
                   const classes = ["calculator-header"];
-                  const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
+                  const columnWidth = computedWidths.get(column.key) || column.width || 120;
+                  const styleParts = [`min-width:${columnWidth}px`, `width:${columnWidth}px`];
                   if (column.kind.includes("sticky")) {
                     classes.push("sticky-header");
                     styleParts.push(`left:${stickyOffsets.get(column.key) || 0}px`);
@@ -2204,16 +2269,15 @@ function renderCalculator() {
             </thead>
             <tbody>
               ${
-                focusedRow
-                  ? (() => {
-                      const inputRow = stateStore.state.calculatorRows.find((item) => item.id === focusedRow.id) || blankCalculatorRow();
-                      return `
-                        <tr class="selected-row" data-action="select-calculator-row" data-row-id="${focusedRow.id}">
-                          ${CALCULATOR_COLUMNS.map((column) => renderCalculatorCell(focusedRow, inputRow, column, stickyOffsets.get(column.key) || 0)).join("")}
-                        </tr>
-                      `;
-                    })()
-                  : `<tr><td colspan="${CALCULATOR_COLUMNS.length}" class="no-data">No voyage rows match the current vessel filter and search.</td></tr>`
+                    focusedRow
+                      ? (() => {
+                          return `
+                            <tr class="selected-row" data-action="select-calculator-row" data-row-id="${focusedRow.id}">
+                          ${visibleColumns.map((column) => renderCalculatorCell(focusedRow, focusedInputRow, { ...column, width: computedWidths.get(column.key) || column.width || 120 }, stickyOffsets.get(column.key) || 0)).join("")}
+                            </tr>
+                          `;
+                        })()
+                  : `<tr><td colspan="${visibleColumns.length}" class="no-data">No voyage rows match the current vessel filter and search.</td></tr>`
               }
             </tbody>
           </table>
@@ -2836,6 +2900,37 @@ function handleMainClick(event) {
     insertCalculatorRow(row);
     stateStore.ui.calculatorSelectedId = row.id;
     recomputeAndRender();
+    return;
+  }
+
+  if (action === "toggle-calculator-columns") {
+    stateStore.ui.calculatorColumnMenuOpen = !stateStore.ui.calculatorColumnMenuOpen;
+    render();
+    return;
+  }
+
+  if (action === "reset-calculator-columns") {
+    stateStore.ui.calculatorVisibleColumns = [...DEFAULT_CALCULATOR_VISIBLE_COLUMNS];
+    stateStore.ui.calculatorColumnMenuOpen = true;
+    render();
+    return;
+  }
+
+  if (action === "toggle-calculator-column") {
+    const columnKey = actionTarget.dataset.columnKey;
+    const current = new Set(getVisibleCalculatorColumnKeys().filter((key) => key !== "rowActions"));
+    if (current.has(columnKey)) {
+      if (current.size > 1) {
+        current.delete(columnKey);
+      }
+    } else {
+      current.add(columnKey);
+    }
+    stateStore.ui.calculatorVisibleColumns = CALCULATOR_COLUMNS
+      .filter((column) => column.key !== "rowActions" && current.has(column.key))
+      .map((column) => column.key);
+    stateStore.ui.calculatorColumnMenuOpen = true;
+    render();
     return;
   }
 
