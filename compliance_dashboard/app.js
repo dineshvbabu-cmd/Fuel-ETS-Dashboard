@@ -13,6 +13,7 @@ import {
 } from "./engine.js";
 
 const PAGE_SIZE = 18;
+const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -88,7 +89,7 @@ const numericColumns = {
 const CALCULATOR_COLUMNS = [
   { key: "recordId", label: "Voyage / Port-Stay ID", kind: "sticky-editable", input: "text", width: 130, placeholder: "V001 / P001" },
   { key: "type", label: "Type", kind: "sticky-editable", input: "select", width: 120, options: ["Voyage", "Port Stay"] },
-  { key: "imoNo", label: "IMO No.", kind: "editable", input: "number", width: 110, list: "imoNumbers" },
+  { key: "imoNo", label: "IMO No.", kind: "editable", input: "text", width: 110, list: "imoNumbers" },
   { key: "vesselName", label: "Vessel Name", kind: "sticky", width: 150 },
   { key: "shipType", label: "Ship Type", kind: "sticky", width: 150 },
   { key: "flagState", label: "Flag State", kind: "sticky", width: 120 },
@@ -222,6 +223,27 @@ const CALCULATOR_HISTORY_COLUMNS = [
   { key: "attainedGhgIntensity", label: "GHG" },
 ];
 
+const CALCULATOR_MANUAL_VALUE_KEYS = [
+  "imoNo",
+  "departureDate",
+  "fromPortCode",
+  "arrivalDate",
+  "toPortCode",
+  "fuel1Type",
+  "fuel1ConsumptionMt",
+  "fuel2Type",
+  "fuel2ConsumptionMt",
+  "bioFuelType",
+  "bioFuelConsumptionMt",
+  "sustainabilityFactor",
+  "windFactor",
+  "distanceNm",
+  "cargoTonnes",
+  "timeAtSeaHours",
+  "berthHours",
+  "opsElectricityMj",
+];
+
 function formatNumber(value, digits = 2) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -276,6 +298,46 @@ function lower(value) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
+}
+
+function getCurrentReportYear() {
+  return Number(stateStore.derived?.parameterValues?.reportYear) || new Date().getFullYear();
+}
+
+function extractYearFromDate(value) {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4})-/);
+  return match ? Number(match[1]) : null;
+}
+
+function resolveRowStorageYear(row) {
+  return Number(row?.storageYear) || extractYearFromDate(row?.departureDate) || extractYearFromDate(row?.arrivalDate) || getCurrentReportYear();
+}
+
+function getCalculatorStateRow(rowId) {
+  return stateStore.state.calculatorRows.find((item) => item.id === rowId) || null;
+}
+
+function rowHasMeaningfulInputs(stateRow) {
+  if (!stateRow) return false;
+  return CALCULATOR_MANUAL_VALUE_KEYS.some((key) => {
+    const value = stateRow[key];
+    if (value === null || value === undefined || value === "") {
+      return false;
+    }
+    if (typeof value === "string" && (value === "(none)" || !value.trim())) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function getMeaningfulDerivedRows() {
+  return stateStore.derived.calculatorRows.filter((row) => rowHasMeaningfulInputs(getCalculatorStateRow(row.id)));
+}
+
+function countRowsForYear(year) {
+  return stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row) && resolveRowStorageYear(row) === year).length;
 }
 
 function syncCalculatorDraftRowsWithDerived() {
@@ -341,18 +403,11 @@ function destroyCharts() {
 }
 
 function buildDataLists() {
-  elements.portCodes.innerHTML = stateStore.state.ports
-    .slice(0, 12000)
-    .map((row) => `<option value="${row.unlocode}">${row.portName}</option>`)
-    .join("");
-
-  elements.fuelTypes.innerHTML = stateStore.derived.fuelReference
-    .map((row) => `<option value="${row.fuelPathway}">${row.fuelClass}</option>`)
-    .join("");
-
-  elements.imoNumbers.innerHTML = stateStore.state.fleet
-    .map((row) => `<option value="${row.imoNo}">${row.vesselName}</option>`)
-    .join("");
+  // Heavy global datalists make spreadsheet-style editing feel sluggish.
+  // Active-row inputs now use lightweight per-cell suggestion lists instead.
+  elements.portCodes.innerHTML = "";
+  elements.fuelTypes.innerHTML = "";
+  elements.imoNumbers.innerHTML = "";
 }
 
 function renderViewTabs() {
@@ -376,7 +431,7 @@ function renderViewTabs() {
 }
 
 function getActiveRows() {
-  const allRows = stateStore.derived.calculatorRows.filter((row) => row.recordId);
+  const allRows = getMeaningfulDerivedRows();
   if (stateStore.ui.vesselFilter === "all") {
     return allRows;
   }
@@ -384,7 +439,7 @@ function getActiveRows() {
 }
 
 function getVisibleVessels() {
-  return [...new Set(stateStore.derived.calculatorRows.filter((row) => row.recordId).map((row) => row.vesselName).filter(Boolean))].sort();
+  return [...new Set(getMeaningfulDerivedRows().map((row) => row.vesselName).filter(Boolean))].sort();
 }
 
 function renderVesselFilter() {
@@ -861,6 +916,59 @@ function calculatorInputValue(inputRow, derivedRow, column) {
   return derivedValue ?? "";
 }
 
+function getCalculatorDatalistId(rowId, columnKey) {
+  return `calc-list-${rowId}-${columnKey}`;
+}
+
+function getSuggestionChoices(sourceKey, rawValue) {
+  const query = lower(rawValue);
+  if (sourceKey === "portCodes") {
+    return stateStore.state.ports
+      .filter((row) => !query || lower(`${row.unlocode} ${row.portName} ${row.country}`).includes(query))
+      .slice(0, 40)
+      .map((row) => ({ value: row.unlocode, label: row.portName }));
+  }
+  if (sourceKey === "fuelTypes") {
+    return stateStore.derived.fuelReference
+      .filter((row) => !query || lower(`${row.fuelPathway} ${row.fuelClass}`).includes(query))
+      .slice(0, 25)
+      .map((row) => ({ value: row.fuelPathway, label: row.fuelClass }));
+  }
+  if (sourceKey === "imoNumbers") {
+    return stateStore.state.fleet
+      .filter((row) => !query || lower(`${row.imoNo} ${row.vesselName}`).includes(query))
+      .slice(0, 25)
+      .map((row) => ({ value: row.imoNo, label: row.vesselName }));
+  }
+  return [];
+}
+
+function renderSuggestionDatalist(rowId, column, rawValue) {
+  if (!column.list) {
+    return "";
+  }
+  const datalistId = getCalculatorDatalistId(rowId, column.key);
+  const options = getSuggestionChoices(column.list, rawValue);
+  return `
+    <datalist id="${datalistId}">
+      ${options.map((option) => `<option value="${option.value}">${option.label || option.value}</option>`).join("")}
+    </datalist>
+  `;
+}
+
+function updateInlineSuggestions(input, columnKey, rawValue) {
+  const column = CALCULATOR_COLUMNS.find((item) => item.key === columnKey);
+  if (!column?.list) {
+    return;
+  }
+  const datalist = document.getElementById(getCalculatorDatalistId(input.dataset.rowId, columnKey));
+  if (!datalist) {
+    return;
+  }
+  const options = getSuggestionChoices(column.list, rawValue);
+  datalist.innerHTML = options.map((option) => `<option value="${option.value}">${option.label || option.value}</option>`).join("");
+}
+
 function renderCalculatorCell(row, inputRow, column, stickyLeft) {
   const classes = ["calculator-cell"];
   const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
@@ -912,9 +1020,11 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
           type="${column.input}"
           value="${calculatorInputValue(inputRow, row, column)}"
           ${column.placeholder ? `placeholder="${column.placeholder}"` : ""}
-          ${column.list ? `list="${column.list}"` : ""}
+          ${column.list ? `list="${getCalculatorDatalistId(row.id, column.key)}"` : ""}
           ${column.step ? `step="${column.step}"` : ""}
+          autocomplete="off"
         >
+        ${renderSuggestionDatalist(row.id, column, calculatorInputValue(inputRow, row, column))}
       </td>
     `;
   }
@@ -1904,10 +2014,10 @@ function renderDashboardCharts() {
 }
 
 function ensureCalculatorSelection() {
-  const rows = stateStore.derived.calculatorRows;
+  const rows = stateStore.derived.calculatorRows.filter((row) => rowHasMeaningfulInputs(getCalculatorStateRow(row.id)));
   const selected = rows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
   if (selected) return selected;
-  const fallback = rows[0] || rows.find((row) => row.recordId);
+  const fallback = rows[0] || stateStore.derived.calculatorRows[0];
   stateStore.ui.calculatorSelectedId = fallback?.id || null;
   return fallback || null;
 }
@@ -1925,6 +2035,11 @@ function nextRecordSerial(type) {
 
 function buildCalculatorRowForCurrentFilter() {
   const row = blankCalculatorRow();
+  let targetYear = getCurrentReportYear();
+  while (countRowsForYear(targetYear) >= MAX_CALCULATOR_ROWS_PER_YEAR) {
+    targetYear += 1;
+  }
+  row.storageYear = targetYear;
   row.type = "Voyage";
   row.recordId = nextRecordSerial(row.type);
   if (stateStore.ui.vesselFilter === "all") {
@@ -1943,9 +2058,18 @@ function buildCalculatorRowForCurrentFilter() {
     row.windFactor = sourceRow.windFactor;
   }
 
+  if (sourceRow?.sourceSystem) {
+    row.sourceSystem = sourceRow.sourceSystem;
+    row.entrySource = sourceRow.entrySource || "manual";
+  }
+
   if (sourceRow?.type === "Voyage" || sourceRow?.type === "Port Stay") {
     row.type = sourceRow.type;
     row.recordId = nextRecordSerial(row.type);
+  }
+
+  if (sourceRow?.storageYear) {
+    row.storageYear = sourceRow.storageYear;
   }
 
   return row;
@@ -1972,6 +2096,11 @@ function insertCalculatorRow(row) {
 function getFilteredCalculatorRows() {
   const searchTerm = lower(stateStore.ui.calculatorSearch);
   return stateStore.derived.calculatorRows.filter((row) => {
+    const stateRow = getCalculatorStateRow(row.id);
+    const isMeaningful = rowHasMeaningfulInputs(stateRow);
+    if (!isMeaningful && row.id !== stateStore.ui.calculatorSelectedId) {
+      return false;
+    }
     if (stateStore.ui.vesselFilter !== "all" && row.vesselName !== stateStore.ui.vesselFilter) {
       return false;
     }
@@ -2015,7 +2144,7 @@ function renderCalculator() {
   });
 
   const totalRows = filteredRows.length;
-  const activeRows = filteredRows.filter((row) => row.recordId);
+  const activeRows = filteredRows.filter((row) => rowHasMeaningfulInputs(getCalculatorStateRow(row.id)));
 
   return `
     <section class="calculator-shell">
@@ -2050,7 +2179,7 @@ function renderCalculator() {
             <h3>Active editable row${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
             <p class="helper-text">Only one row stays open for editing at a time. Earlier rows remain available in the history panel below.</p>
           </div>
-          <span class="chip">${totalRows} rows · ${activeRows.length} active records</span>
+          <span class="chip">${totalRows} rows / ${activeRows.length} active records</span>
         </div>
         <div class="calculator-table-wrap">
           <table class="calculator-table">
@@ -2089,48 +2218,7 @@ function renderCalculator() {
             </tbody>
           </table>
         </div>
-        ${
-          historyRows.length
-            ? `
-              <div class="calculator-history">
-                <button class="section-bar calculator-history-toggle" type="button" data-action="toggle-calculator-history">
-                  <span class="section-bar-main">
-                    <span class="section-chevron ${stateStore.ui.calculatorHistoryOpen ? "open" : ""}">&#9662;</span>
-                    <span class="section-title-group">
-                      <strong>Previous rows</strong>
-                      ${renderSectionBadge(`${historyRows.length} collapsed`)}
-                    </span>
-                  </span>
-                  <span class="section-bar-note">Open to switch the editable row without loading the full table at once</span>
-                </button>
-                <div class="section-body ${stateStore.ui.calculatorHistoryOpen ? "" : "collapsed"}">
-                  <div class="table-wrap calculator-history-wrap">
-                    <table class="calculator-history-table">
-                      <thead>
-                        <tr>
-                          ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<th>${column.label}</th>`).join("")}
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${historyRows
-                          .map(
-                            (row) => `
-                              <tr>
-                                ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<td>${renderCalculatorHistoryCell(row, column)}</td>`).join("")}
-                                <td><button class="inline-button compact-button button-violet" type="button" data-action="edit-calculator-row" data-row-id="${row.id}">Edit row</button></td>
-                              </tr>
-                            `
-                          )
-                          .join("")}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            `
-            : ""
-        }
+        ${renderCalculatorHistory(historyRows)}
           </article>
         `,
       })}
@@ -2147,6 +2235,83 @@ function renderCalculatorHistoryCell(row, column) {
     return `<span class="number-cell">${formatNumber(value, 2)}</span>`;
   }
   return value || "-";
+}
+
+function groupCalculatorRowsByYear(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const year = resolveRowStorageYear(getCalculatorStateRow(row.id) || row);
+    if (!grouped.has(year)) {
+      grouped.set(year, []);
+    }
+    grouped.get(year).push(row);
+  });
+  return [...grouped.entries()].sort((a, b) => Number(b[0]) - Number(a[0]));
+}
+
+function renderCalculatorHistory(historyRows) {
+  if (!historyRows.length) {
+    return "";
+  }
+
+  const yearGroups = groupCalculatorRowsByYear(historyRows);
+  return `
+    <div class="calculator-history">
+      <button class="section-bar calculator-history-toggle" type="button" data-action="toggle-calculator-history">
+        <span class="section-bar-main">
+          <span class="section-chevron ${stateStore.ui.calculatorHistoryOpen ? "open" : ""}">&#9662;</span>
+          <span class="section-title-group">
+            <strong>Previous rows</strong>
+            ${renderSectionBadge(`${historyRows.length} stored`)}
+          </span>
+        </span>
+        <span class="section-bar-note">Rows are grouped by reporting year and scroll inside each section</span>
+      </button>
+      <div class="section-body ${stateStore.ui.calculatorHistoryOpen ? "" : "collapsed"}">
+        <div class="calculator-history-groups">
+          ${yearGroups
+            .map(
+              ([year, rows]) => `
+                <section class="calculator-year-group">
+                  <div class="calculator-year-head">
+                    <span class="eyebrow">Reporting Year</span>
+                    <strong>${year}</strong>
+                    <span class="chip">${rows.length} rows / ${MAX_CALCULATOR_ROWS_PER_YEAR} max</span>
+                  </div>
+                  <div class="table-wrap calculator-history-wrap">
+                    <table class="calculator-history-table">
+                      <thead>
+                        <tr>
+                          ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<th>${column.label}</th>`).join("")}
+                          <th>Source</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${rows
+                          .map((row) => {
+                            const sourceRow = getCalculatorStateRow(row.id);
+                            const sourceLabel = sourceRow?.sourceSystem || (sourceRow?.entrySource === "api" ? "API feed" : "Manual");
+                            return `
+                              <tr>
+                                ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<td>${renderCalculatorHistoryCell(row, column)}</td>`).join("")}
+                                <td>${sourceLabel}</td>
+                                <td><button class="inline-button compact-button button-violet" type="button" data-action="edit-calculator-row" data-row-id="${row.id}">Edit row</button></td>
+                              </tr>
+                            `;
+                          })
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              `
+            )
+            .join("")}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function getSheetRowsForDisplay(sheetKey) {
@@ -2370,6 +2535,72 @@ function exportFilteredData() {
   downloadText(`fuel-ets-${slug}-summary.csv`, summaryCsv, "text/csv");
 }
 
+function mapExternalRowToCalculatorRow(sourceSystem, payload = {}) {
+  const row = blankCalculatorRow();
+  row.entrySource = "api";
+  row.sourceSystem = sourceSystem || "External";
+  row.sourceRecordId = String(payload.sourceRecordId || payload.externalId || payload.id || "");
+  row.sourceUpdatedAt = String(payload.sourceUpdatedAt || payload.updatedAt || new Date().toISOString());
+  row.storageYear = Number(payload.storageYear) || extractYearFromDate(payload.departureDate) || extractYearFromDate(payload.arrivalDate) || getCurrentReportYear();
+
+  const directFields = [
+    "recordId",
+    "type",
+    "imoNo",
+    "departureDate",
+    "fromPortCode",
+    "arrivalDate",
+    "toPortCode",
+    "fuel1Type",
+    "fuel1ConsumptionMt",
+    "fuel2Type",
+    "fuel2ConsumptionMt",
+    "bioFuelType",
+    "bioFuelConsumptionMt",
+    "sustainabilityFactor",
+    "windFactor",
+    "distanceNm",
+    "cargoTonnes",
+    "timeAtSeaHours",
+    "berthHours",
+    "opsElectricityMj",
+  ];
+
+  directFields.forEach((field) => {
+    if (payload[field] !== undefined) {
+      setCalculatorRowValue(row, field, payload[field]);
+    }
+  });
+
+  if (!row.recordId) {
+    row.recordId = nextRecordSerial(row.type || "Voyage");
+  }
+  return row;
+}
+
+function importVoyageRowsFromExternal(sourceSystem, payloadRows = [], options = {}) {
+  const rows = Array.isArray(payloadRows) ? payloadRows : [];
+  const replaceMatchingSource = Boolean(options.replaceMatchingSource);
+  const incoming = rows.map((payload) => mapExternalRowToCalculatorRow(sourceSystem, payload));
+
+  incoming.forEach((row) => {
+    const existingIndex = stateStore.state.calculatorRows.findIndex((item) => {
+      if (replaceMatchingSource && row.sourceRecordId) {
+        return item.sourceSystem === row.sourceSystem && item.sourceRecordId === row.sourceRecordId;
+      }
+      return false;
+    });
+    if (existingIndex >= 0) {
+      stateStore.state.calculatorRows[existingIndex] = row;
+    } else {
+      insertCalculatorRow(row);
+    }
+  });
+
+  stateStore.ui.calculatorSelectedId = incoming[0]?.id || stateStore.ui.calculatorSelectedId;
+  recomputeAndRender();
+}
+
 function updateCalculatorField(field, rawValue) {
   const row = stateStore.state.calculatorRows.find((item) => item.id === stateStore.ui.calculatorSelectedId);
   if (!row) return;
@@ -2392,9 +2623,14 @@ function setCalculatorRowValue(row, field, rawValue) {
     "opsElectricityMj",
   ]);
   row[field] = numericKeys.has(field) ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
+  row.entrySource = row.entrySource || "manual";
 
   if (field === "recordId") {
     row.recordId = String(row.recordId || "").toUpperCase();
+  }
+
+  if (field === "departureDate" || field === "arrivalDate") {
+    row.storageYear = extractYearFromDate(field === "departureDate" ? row.departureDate : row.arrivalDate) || row.storageYear || getCurrentReportYear();
   }
 
   if (field === "imoNo" && (row.windFactor === null || row.windFactor === undefined || row.windFactor === "")) {
@@ -2689,6 +2925,7 @@ function handleMainInput(event) {
 
   const calcCell = event.target.dataset.calcCell;
   if (calcCell) {
+    updateInlineSuggestions(event.target, calcCell, event.target.value);
     if (event.type === "input") {
       updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, false);
       return;
@@ -2785,6 +3022,12 @@ async function bootstrap() {
     elements.rowEditorDialog.close();
   });
   elements.saveEditorButton.addEventListener("click", saveEditorDialog);
+
+  window.fuelEtsDashboard = {
+    importVoyageRows: importVoyageRowsFromExternal,
+    exportState: () => deepClone(stateStore.state),
+    getBlankVoyageTemplate: () => deepClone(blankCalculatorRow()),
+  };
 
   render();
   loadEuaMarketSnapshot();

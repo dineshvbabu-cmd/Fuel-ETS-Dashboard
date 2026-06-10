@@ -771,12 +771,13 @@ h4 {
   margin-top: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: auto;
   background: rgba(255, 255, 255, 0.88);
   max-width: 100%;
   width: 100%;
   scrollbar-gutter: stable both-edges;
+  display: block;
 }
 
 table {
@@ -921,7 +922,7 @@ tbody tr:hover {
 }
 
 .calculator-table-wrap {
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: auto;
   max-height: calc(100vh - 220px);
   border-radius: 8px;
@@ -930,6 +931,8 @@ tbody tr:hover {
   max-width: 100%;
   width: 100%;
   scrollbar-gutter: stable both-edges;
+  display: block;
+  padding-bottom: 6px;
 }
 
 .calculator-table {
@@ -1022,6 +1025,10 @@ tbody tr:hover {
   box-shadow: 0 0 0 3px rgba(244, 177, 94, 0.18);
 }
 
+.calculator-grid-input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
 .compact-button {
   padding: 5px 8px;
   font-size: 0.74rem;
@@ -1081,6 +1088,25 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.calculator-history-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.calculator-year-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 8px;
+}
+
+.calculator-year-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .calculator-history-toggle {
   width: 100%;
   text-align: left;
@@ -1090,11 +1116,35 @@ tbody tr:hover {
 .calculator-history-wrap {
   margin-top: 0;
   max-height: 320px;
+  overflow-x: scroll;
+  overflow-y: auto;
 }
 
 .calculator-history-table {
   width: max-content;
   min-width: 100%;
+}
+
+.table-wrap::-webkit-scrollbar,
+.calculator-table-wrap::-webkit-scrollbar,
+.calculator-history-wrap::-webkit-scrollbar {
+  height: 12px;
+  width: 12px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb,
+.calculator-table-wrap::-webkit-scrollbar-thumb,
+.calculator-history-wrap::-webkit-scrollbar-thumb {
+  background: rgba(33, 75, 121, 0.28);
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+}
+
+.table-wrap::-webkit-scrollbar-track,
+.calculator-table-wrap::-webkit-scrollbar-track,
+.calculator-history-wrap::-webkit-scrollbar-track {
+  background: rgba(220, 230, 244, 0.55);
+  border-radius: 999px;
 }
 
 .detail-number-cell {
