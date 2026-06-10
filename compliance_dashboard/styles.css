@@ -598,13 +598,9 @@ h4 {
 }
 
 .dashboard-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(520px, 0.95fr);
-  gap: 10px;
-}
-
-.dashboard-main {
   min-width: 0;
+  display: grid;
+  gap: 10px;
 }
 
 .chart-grid {
@@ -915,7 +911,106 @@ tbody tr:hover {
 }
 
 .dense-table-wrap {
-  max-height: 340px;
+  max-height: 460px;
+}
+
+.detail-table-head {
+  align-items: center;
+}
+
+.detail-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.detail-scope-field {
+  min-width: 200px;
+}
+
+.detail-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.projection-chip {
+  background: rgba(127, 119, 221, 0.1);
+  border: 1px solid rgba(127, 119, 221, 0.2);
+}
+
+.detail-table-wrap {
+  margin-top: 10px;
+}
+
+.detail-table {
+  min-width: 1760px;
+}
+
+.detail-number-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.detail-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 100%;
+}
+
+.detail-note {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.detail-pill.voyage {
+  background: rgba(66, 136, 214, 0.12);
+  color: #2c67a9;
+}
+
+.detail-pill.port {
+  background: rgba(23, 140, 24, 0.12);
+  color: #1f7d21;
+}
+
+.detail-pill.other {
+  background: rgba(24, 44, 77, 0.08);
+  color: var(--muted);
+}
+
+.detail-pill.scope-full {
+  background: rgba(23, 140, 24, 0.1);
+  color: #1f7d21;
+}
+
+.detail-pill.scope-half {
+  background: rgba(215, 138, 31, 0.12);
+  color: #b46d0d;
+}
+
+.detail-pill.scope-out {
+  background: rgba(207, 83, 83, 0.12);
+  color: #a93030;
 }
 
 .library-drawer {
@@ -1044,10 +1139,6 @@ button:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .dashboard-layout {
-    grid-template-columns: 1fr;
-  }
-
   .drilldown-pane {
     position: static;
     max-height: none;
@@ -1066,6 +1157,11 @@ button:hover {
   .projection-grid,
   .projection-summary-bar {
     grid-template-columns: 1fr;
+  }
+
+  .detail-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .topbar,

@@ -54,6 +54,8 @@ const stateStore = {
     activeView: "dashboard",
     vesselFilter: "all",
     calculatorSearch: "",
+    detailSearch: "",
+    detailScope: "all",
     calculatorSelectedId: null,
     libraryOpen: false,
     librarySheet: "parameters",
@@ -125,6 +127,29 @@ const CALCULATOR_COLUMNS = [
   { key: "rowActions", label: "Actions", kind: "actions", width: 100 },
 ];
 
+const DETAIL_TABLE_COLUMNS = [
+  { key: "recordId", label: "ID", width: 84 },
+  { key: "type", label: "Type", width: 88, format: "type" },
+  { key: "vesselName", label: "Vessel", width: 108 },
+  { key: "fromPortName", label: "From", width: 138 },
+  { key: "toPortName", label: "To", width: 138 },
+  { key: "departureDate", label: "Date", width: 96, format: "date" },
+  { key: "fuel1Type", label: "Fuel 1", width: 92 },
+  { key: "fuel1ConsumptionMt", label: "F1 MT", width: 82, format: "number", digits: 2 },
+  { key: "fuel2Type", label: "Fuel 2", width: 92 },
+  { key: "fuel2ConsumptionMt", label: "F2 MT", width: 82, format: "number", digits: 2 },
+  { key: "scopePercent", label: "Scope", width: 76, format: "scope" },
+  { key: "euasRequiredT", label: "EUAs (t)", width: 90, format: "number", digits: 2 },
+  { key: "projectedEuasRequiredT", label: "Proj EUAs", width: 96, format: "projection-number", digits: 2, projectionKey: "deltaEuasRequiredT", proj: true },
+  { key: "euasCostEur", label: "EUA Cost", width: 106, format: "currency" },
+  { key: "attainedGhgIntensity", label: "GHG", width: 84, format: "ghg", digits: 2 },
+  { key: "projectedAttainedGhgIntensity", label: "Proj GHG", width: 96, format: "projection-ghg", digits: 2, projectionKey: "deltaAttainedGhgIntensity", proj: true },
+  { key: "complianceBalanceT", label: "Balance t", width: 96, format: "balance", digits: 2 },
+  { key: "projectedComplianceBalanceT", label: "Proj Bal", width: 96, format: "projection-balance", digits: 2, projectionKey: "deltaComplianceBalanceT", proj: true },
+  { key: "fuelEuPenaltyEur", label: "Penalty", width: 94, format: "currency" },
+  { key: "scopeNote", label: "Scope note", width: 240, format: "note" },
+];
+
 function formatNumber(value, digits = 2) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -152,6 +177,14 @@ function formatCurrency(value) {
 
 function formatPercent(value, digits = 0) {
   return `${formatNumber((Number(value) || 0) * 100, digits)}%`;
+}
+
+function formatDateValue(value) {
+  if (!value) {
+    return "-";
+  }
+  const text = String(value);
+  return text.includes("T") ? text.slice(0, 10) : text;
 }
 
 function lower(value) {
@@ -658,8 +691,14 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
   `;
 }
 
-function openDrilldown(title, subtitle, columns, rows) {
-  stateStore.ui.drilldown = { title, subtitle, columns, rows };
+function openDrilldown(title, subtitle, columns, rows, sourceRows = []) {
+  stateStore.ui.drilldown = {
+    title,
+    subtitle,
+    columns,
+    rows,
+    sourceRecordIds: sourceRows.map((row) => row.recordId).filter(Boolean),
+  };
   render();
 }
 
@@ -684,7 +723,8 @@ function openKpiDrilldown(kpiKey) {
         row.type,
         formatNumber(row.euasRequiredT, 3),
         formatNumber(row.etsInScopeCo2eqT, 3),
-      ])
+      ]),
+      activeRows
     );
     return;
   }
@@ -700,7 +740,8 @@ function openKpiDrilldown(kpiKey) {
         row.route,
         formatNumber(row.euasRequiredT, 3),
         formatCurrency(row.euasCostEur),
-      ])
+      ]),
+      activeRows
     );
     return;
   }
@@ -717,25 +758,26 @@ function openKpiDrilldown(kpiKey) {
         formatNumber(row.attainedGhgIntensity, 3),
         formatNumber(row.targetGhgIntensity, 3),
         formatNumber(row.complianceBalanceT, 3),
-      ])
+      ]),
+      activeRows
     );
     return;
   }
 
   if (kpiKey === "penalty") {
+    const penaltyRows = activeRows.filter((row) => numberOrZero(row.fuelEuPenaltyEur) > 0);
     openDrilldown(
       "FuelEU penalty",
       "Penalty-bearing rows for the current filter.",
       ["Record", "Vessel", "Route", "Compliance Balance", "Penalty"],
-      activeRows
-        .filter((row) => numberOrZero(row.fuelEuPenaltyEur) > 0)
-        .map((row) => [
+      penaltyRows.map((row) => [
           row.recordId,
           row.vesselName,
           row.route,
           formatNumber(row.complianceBalanceT, 3),
           formatCurrency(row.fuelEuPenaltyEur),
-        ])
+        ]),
+      penaltyRows
     );
     return;
   }
@@ -752,7 +794,8 @@ function openKpiDrilldown(kpiKey) {
         row.type,
         formatNumber(row.attainedGhgIntensity, 3),
         formatNumber(row.targetGhgIntensity, 3),
-      ])
+      ]),
+      activeRows
     );
     return;
   }
@@ -772,7 +815,8 @@ function openKpiDrilldown(kpiKey) {
           formatNumber(row.bioFuelConsumptionMt, 2),
           formatNumber(total, 2),
         ];
-      })
+      }),
+      activeRows
     );
     return;
   }
@@ -789,7 +833,8 @@ function openKpiDrilldown(kpiKey) {
         formatNumber(row.euasRequiredT, 3),
         formatNumber(row.attainedGhgIntensity, 3),
         formatCurrency(row.euasCostEur),
-      ])
+      ]),
+      dashboard.voyageRows
     );
     return;
   }
@@ -806,7 +851,8 @@ function openKpiDrilldown(kpiKey) {
         formatNumber(row.euasRequiredT, 3),
         formatNumber(row.attainedGhgIntensity, 3),
         formatCurrency(row.euasCostEur),
-      ])
+      ]),
+      dashboard.portStayRows
     );
   }
 }
@@ -853,6 +899,205 @@ function renderDrilldownPane() {
       </div>
     </aside>
   `;
+}
+
+function getDetailRows() {
+  const projectedRows = getProjectionRows(getActiveRows());
+  const drilldownRecordIds = stateStore.ui.drilldown?.sourceRecordIds || [];
+  const searchTerm = lower(stateStore.ui.detailSearch);
+
+  return projectedRows.filter((row) => {
+    if (drilldownRecordIds.length && !drilldownRecordIds.includes(row.recordId)) {
+      return false;
+    }
+
+    if (stateStore.ui.detailScope === "100" && numberOrZero(row.scopePercent) !== 1) {
+      return false;
+    }
+    if (stateStore.ui.detailScope === "50" && numberOrZero(row.scopePercent) !== 0.5) {
+      return false;
+    }
+    if (stateStore.ui.detailScope === "0" && numberOrZero(row.scopePercent) !== 0) {
+      return false;
+    }
+
+    if (!searchTerm) {
+      return true;
+    }
+
+    return DETAIL_TABLE_COLUMNS.filter((column) => !column.proj).some((column) => lower(row[column.key]).includes(searchTerm));
+  });
+}
+
+function renderDetailCell(row, column) {
+  const value = row[column.key];
+
+  if (column.format === "type") {
+    const tone = row.type === "Voyage" ? "voyage" : row.type === "Port Stay" ? "port" : "other";
+    const label = row.type === "Port Stay" ? "Port" : row.type || "-";
+    return `<span class="detail-pill ${tone}">${label}</span>`;
+  }
+
+  if (column.format === "scope") {
+    const scope = numberOrZero(value);
+    if (scope === 1) return `<span class="detail-pill scope-full">100%</span>`;
+    if (scope === 0.5) return `<span class="detail-pill scope-half">50%</span>`;
+    if (scope === 0) return `<span class="detail-pill scope-out">Out</span>`;
+    return "-";
+  }
+
+  if (column.format === "date") {
+    return formatDateValue(value);
+  }
+
+  if (column.format === "currency") {
+    return `<span class="detail-value number-cell">${formatCurrency(value)}</span>`;
+  }
+
+  if (column.format === "number") {
+    return `<span class="detail-value number-cell">${formatNumber(value, column.digits || 0)}</span>`;
+  }
+
+  if (column.format === "ghg") {
+    const good = numberOrZero(row.attainedGhgIntensity) <= numberOrZero(row.targetGhgIntensity);
+    return `<span class="detail-value number-cell ${good ? "tag-good" : "tag-risk"}">${formatNumber(value, column.digits || 0)}</span>`;
+  }
+
+  if (column.format === "balance") {
+    return `<span class="detail-value number-cell ${numberOrZero(value) >= 0 ? "tag-good" : "tag-risk"}">${numberOrZero(value) >= 0 ? "+" : ""}${formatNumber(value, column.digits || 0)}</span>`;
+  }
+
+  if (column.format?.startsWith("projection")) {
+    const delta = numberOrZero(row[column.projectionKey]);
+    const lowerIsBetter = column.key !== "projectedComplianceBalanceT";
+    const deltaMeta = formatDelta(delta, 1, "", lowerIsBetter);
+    const valueTone =
+      column.format === "projection-balance"
+        ? numberOrZero(value) >= 0
+          ? "tag-good"
+          : "tag-risk"
+        : column.format === "projection-ghg"
+          ? numberOrZero(value) <= numberOrZero(row.targetGhgIntensity)
+            ? "tag-good"
+            : "tag-risk"
+          : "";
+    const prefix = column.format === "projection-balance" && numberOrZero(value) >= 0 ? "+" : "";
+    return `
+      <span class="detail-value number-cell ${valueTone}">
+        ${prefix}${formatNumber(value, column.digits || 0)}
+        <span class="projection-delta ${deltaMeta.tone}">${deltaMeta.text}</span>
+      </span>
+    `;
+  }
+
+  if (column.format === "note") {
+    return `<span class="detail-note" title="${value || ""}">${value || "-"}</span>`;
+  }
+
+  return value || "-";
+}
+
+function renderUnifiedDetailSection() {
+  const filteredRows = getDetailRows();
+  const showProjection = projectionIsActive();
+  const visibleColumns = showProjection ? DETAIL_TABLE_COLUMNS : DETAIL_TABLE_COLUMNS.filter((column) => !column.proj);
+  const drilldown = stateStore.ui.drilldown;
+  const totalEuas = filteredRows.reduce((sum, row) => sum + numberOrZero(row.euasRequiredT), 0);
+  const totalCost = filteredRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
+  const totalBalance = filteredRows.reduce((sum, row) => sum + numberOrZero(row.complianceBalanceT), 0);
+  const projectedEuas = filteredRows.reduce((sum, row) => sum + numberOrZero(row.projectedEuasRequiredT), 0);
+  const projectedBalance = filteredRows.reduce((sum, row) => sum + numberOrZero(row.projectedComplianceBalanceT), 0);
+
+  return renderCollapsibleSection({
+    action: "toggle-voyage-table",
+    title: "Voyage / Port-Stay Detail",
+    badges: `${renderSectionBadge(`${filteredRows.length} rows`)}${showProjection ? renderSectionBadge("Projected columns", "purple") : ""}`,
+    note: "Charts, KPI clicks, and search all feed this one section",
+    open: stateStore.ui.voyageTableOpen,
+    body: `
+      <article class="table-card compact-table-card">
+        <div class="table-head detail-table-head">
+          <div>
+            <p class="eyebrow">Unified Detail View</p>
+            <h3>${drilldown ? drilldown.title : "All filtered records"}</h3>
+            <p class="helper-text">${drilldown?.subtitle || "Click a KPI or chart to focus this same table, or use the search and scope filters below."}</p>
+          </div>
+          ${drilldown ? `<button class="inline-button compact-button" type="button" data-action="close-drilldown">Clear focus</button>` : ""}
+        </div>
+
+        <div class="detail-toolbar">
+          <div class="toolbar-field">
+            <span>Search</span>
+            <input
+              class="search-input"
+              type="search"
+              data-action="detail-search"
+              value="${stateStore.ui.detailSearch}"
+              placeholder="Search ID, vessel, port, fuel, note, or type"
+            >
+          </div>
+          <div class="toolbar-field detail-scope-field">
+            <span>Scope</span>
+            <select class="toolbar-select" data-action="detail-scope">
+              <option value="all" ${stateStore.ui.detailScope === "all" ? "selected" : ""}>All scopes</option>
+              <option value="100" ${stateStore.ui.detailScope === "100" ? "selected" : ""}>100% in-scope</option>
+              <option value="50" ${stateStore.ui.detailScope === "50" ? "selected" : ""}>50% in-scope</option>
+              <option value="0" ${stateStore.ui.detailScope === "0" ? "selected" : ""}>Out of scope</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="detail-summary">
+          <span class="chip">${filteredRows.length} visible rows</span>
+          <span class="chip">EUAs ${formatNumber(totalEuas, 1)} t</span>
+          <span class="chip">Cost ${formatCurrency(totalCost)}</span>
+          <span class="chip ${totalBalance >= 0 ? "tag-good" : "tag-risk"}">Balance ${totalBalance >= 0 ? "+" : ""}${formatNumber(totalBalance, 1)} t</span>
+          ${showProjection ? `<span class="chip projection-chip">Projected EUAs ${formatNumber(projectedEuas, 1)} t</span><span class="chip projection-chip ${projectedBalance >= 0 ? "tag-good" : "tag-risk"}">Projected balance ${projectedBalance >= 0 ? "+" : ""}${formatNumber(projectedBalance, 1)} t</span>` : ""}
+        </div>
+
+        <div class="table-wrap dense-table-wrap detail-table-wrap">
+          <table class="detail-table">
+            <thead>
+              <tr>
+                ${visibleColumns
+                  .map(
+                    (column) => `
+                      <th style="min-width:${column.width}px;width:${column.width}px" class="${column.proj ? "projection-col-head" : ""}">
+                        ${column.proj ? "⚡ " : ""}${column.label}
+                      </th>
+                    `
+                  )
+                  .join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                filteredRows.length
+                  ? filteredRows
+                      .map(
+                        (row) => `
+                          <tr>
+                            ${visibleColumns
+                              .map(
+                                (column) => `
+                                  <td class="${["number", "currency", "ghg", "balance"].includes(column.format) || column.format?.startsWith("projection") ? "detail-number-cell" : ""}">
+                                    ${renderDetailCell(row, column)}
+                                  </td>
+                                `
+                              )
+                              .join("")}
+                          </tr>
+                        `
+                      )
+                      .join("")
+                  : `<tr><td colspan="${visibleColumns.length}" class="no-data">No matching records for the current chart focus and filters.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </article>
+    `,
+  });
 }
 
 function renderProjectionPanel() {
@@ -966,76 +1211,18 @@ function renderProjectionPanel() {
   `;
 }
 
-function renderProjectionVoyageTable() {
-  const projectedRows = getProjectionRows(getActiveRows().filter((row) => row.type === "Voyage"));
-  const showProjection = projectionIsActive();
-  return renderCollapsibleSection({
-    action: "toggle-voyage-table",
-    title: "Voyage Results Table",
-    badges: `${renderSectionBadge(`${projectedRows.length} voyages`)}${showProjection ? renderSectionBadge("Projected columns", "purple") : ""}`,
-    note: "Collapse when you want more chart space",
-    open: stateStore.ui.voyageTableOpen,
-    body: `
-      <article class="table-card compact-table-card">
-        <div class="table-wrap dense-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Record</th>
-                <th>Vessel</th>
-                <th>Route</th>
-                <th>EUAs</th>
-                <th>GHG</th>
-                <th>Balance</th>
-                ${showProjection ? `<th class="projection-col-head">Proj EUAs</th><th class="projection-col-head">Proj GHG</th><th class="projection-col-head">Proj Balance</th>` : ""}
-              </tr>
-            </thead>
-            <tbody>
-              ${projectedRows
-                .map((row) => {
-                  const euaDelta = formatDelta(row.deltaEuasRequiredT, 2, "", true);
-                  const ghgDelta = formatDelta(row.deltaAttainedGhgIntensity, 2, "", true);
-                  const balanceDelta = formatDelta(row.deltaComplianceBalanceT, 2, "", false);
-                  return `
-                    <tr>
-                      <td>${row.recordId}</td>
-                      <td>${row.vesselName}</td>
-                      <td>${row.route}</td>
-                      <td>${formatNumber(row.euasRequiredT, 3)}</td>
-                      <td>${formatNumber(row.attainedGhgIntensity, 3)}</td>
-                      <td class="${toneClass(row.complianceBalanceT || 0)}">${formatNumber(row.complianceBalanceT, 3)}</td>
-                      ${
-                        showProjection
-                          ? `<td class="projection-cell">${formatNumber(row.projectedEuasRequiredT, 3)} <span class="projection-delta ${euaDelta.tone}">${euaDelta.text}</span></td>
-                             <td class="projection-cell">${formatNumber(row.projectedAttainedGhgIntensity, 3)} <span class="projection-delta ${ghgDelta.tone}">${ghgDelta.text}</span></td>
-                             <td class="projection-cell">${formatNumber(row.projectedComplianceBalanceT, 3)} <span class="projection-delta ${balanceDelta.tone}">${balanceDelta.text}</span></td>`
-                          : ""
-                      }
-                    </tr>
-                  `;
-                })
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </article>
-    `,
-  });
-}
-
 function renderDashboard() {
   return `
     ${renderProjectionPanel()}
     <section class="dashboard-layout">
-      <div class="dashboard-main">
-        ${renderCollapsibleSection({
-          action: "toggle-charts",
-          title: "Visual Analytics",
-          badges: renderSectionBadge("6 charts"),
-          note: "Collapse when you need more space",
-          open: stateStore.ui.chartsOpen,
-          body: `
-            <div class="chart-grid">
+      ${renderCollapsibleSection({
+        action: "toggle-charts",
+        title: "Visual Analytics",
+        badges: renderSectionBadge("6 charts"),
+        note: "Collapse when you need more space",
+        open: stateStore.ui.chartsOpen,
+        body: `
+          <div class="chart-grid">
           <article class="chart-card">
             <div class="table-head">
               <div>
@@ -1094,12 +1281,10 @@ function renderDashboard() {
             </div>
             <div class="chart-canvas-wrap"><canvas id="projectedBalanceChart"></canvas></div>
           </article>
-            </div>
-          `,
-        })}
-        ${renderProjectionVoyageTable()}
-      </div>
-      ${renderDrilldownPane()}
+          </div>
+        `,
+      })}
+      ${renderUnifiedDetailSection()}
     </section>
   `;
 }
@@ -1159,7 +1344,8 @@ function renderDashboardCharts() {
               formatNumber(row.euasRequiredT, 3),
               formatCurrency(row.euasCostEur),
               formatNumber(row.attainedGhgIntensity, 3),
-            ]]
+            ]],
+            [row]
           );
         },
         scales: {
@@ -1212,7 +1398,8 @@ function renderDashboardCharts() {
               formatNumber(row.targetGhgIntensity, 3),
               formatNumber(row.complianceBalanceT, 3),
               formatCurrency(row.fuelEuPenaltyEur),
-            ]]
+            ]],
+            [row]
           );
         },
       },
@@ -1251,7 +1438,8 @@ function renderDashboardCharts() {
               formatNumber(row.euasRequiredT, 3),
               formatCurrency(row.euasCostEur),
               formatNumber(numberOrZero(row.fuel1ConsumptionMt) + numberOrZero(row.fuel2ConsumptionMt) + numberOrZero(row.bioFuelConsumptionMt), 2),
-            ]]
+            ]],
+            [row]
           );
         },
       },
@@ -1292,7 +1480,8 @@ function renderDashboardCharts() {
               row.type,
               formatNumber(row.euasRequiredT, 3),
               formatCurrency(row.euasCostEur),
-            ])
+            ]),
+            rows
           );
         },
       },
@@ -1336,7 +1525,8 @@ function renderDashboardCharts() {
               formatNumber(row.deltaEuasRequiredT, 3),
               formatCurrency(row.euasCostEur),
               formatCurrency(row.projectedEuasCostEur),
-            ]]
+            ]],
+            [row]
           );
         },
       },
@@ -1393,7 +1583,8 @@ function renderDashboardCharts() {
               formatNumber(row.deltaComplianceBalanceT, 3),
               formatNumber(row.attainedGhgIntensity, 3),
               formatNumber(row.projectedAttainedGhgIntensity, 3),
-            ]]
+            ]],
+            [row]
           );
         },
       },
@@ -2008,6 +2199,18 @@ function handleMainInput(event) {
   if (event.target.dataset.action === "calculator-search") {
     stateStore.ui.calculatorSearch = event.target.value;
     render();
+    return;
+  }
+
+  if (event.target.dataset.action === "detail-search") {
+    stateStore.ui.detailSearch = event.target.value;
+    render();
+    return;
+  }
+
+  if (event.target.dataset.action === "detail-scope") {
+    stateStore.ui.detailScope = event.target.value;
+    render();
   }
 }
 
@@ -2028,6 +2231,8 @@ async function bootstrap() {
     stateStore.ui.vesselFilter = event.target.value;
     stateStore.ui.calculatorSelectedId = null;
     stateStore.ui.drilldown = null;
+    stateStore.ui.detailSearch = "";
+    stateStore.ui.detailScope = "all";
     render();
   });
   elements.libraryToggleButton.addEventListener("click", () => {
@@ -2050,6 +2255,8 @@ async function bootstrap() {
     stateStore.state = deepClone(stateStore.seedState);
     stateStore.ui.calculatorSelectedId = null;
     stateStore.ui.drilldown = null;
+    stateStore.ui.detailSearch = "";
+    stateStore.ui.detailScope = "all";
     stateStore.ui.projection = { ...PROJECTION_BASELINE };
     stateStore.ui.projectionPreset = "baseline";
     recomputeAndRender();
