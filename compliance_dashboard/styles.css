@@ -250,6 +250,10 @@ h4 {
   color: #fff;
 }
 
+#resetWorkbookButton {
+  display: none;
+}
+
 .toolbar-field {
   display: grid;
   gap: 6px;
@@ -767,13 +771,16 @@ h4 {
   margin-top: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   background: rgba(255, 255, 255, 0.88);
   max-width: 100%;
+  width: 100%;
+  scrollbar-gutter: stable both-edges;
 }
 
 table {
-  width: 100%;
+  width: max-content;
   border-collapse: collapse;
   min-width: 760px;
 }
@@ -914,12 +921,15 @@ tbody tr:hover {
 }
 
 .calculator-table-wrap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   max-height: calc(100vh - 220px);
   border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
   max-width: 100%;
+  width: 100%;
+  scrollbar-gutter: stable both-edges;
 }
 
 .calculator-table {
@@ -1061,7 +1071,30 @@ tbody tr:hover {
 }
 
 .detail-table {
+  width: max-content;
   min-width: 1760px;
+}
+
+.calculator-history {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.calculator-history-toggle {
+  width: 100%;
+  text-align: left;
+  background: rgba(248, 251, 255, 0.95);
+}
+
+.calculator-history-wrap {
+  margin-top: 0;
+  max-height: 320px;
+}
+
+.calculator-history-table {
+  width: max-content;
+  min-width: 100%;
 }
 
 .detail-number-cell {

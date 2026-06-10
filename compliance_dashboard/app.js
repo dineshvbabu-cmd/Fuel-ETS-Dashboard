@@ -62,6 +62,7 @@ const stateStore = {
     detailSearch: "",
     detailScope: "all",
     calculatorSelectedId: null,
+    calculatorHistoryOpen: false,
     libraryOpen: false,
     librarySheet: "parameters",
     librarySearch: "",
@@ -154,6 +155,73 @@ const DETAIL_TABLE_COLUMNS = [
   { key: "fuelEuPenaltyEur", label: "Penalty", width: 94, format: "currency" },
 ];
 
+const LIBRARY_DISPLAY_COLUMNS = {
+  fuelReference: [
+    "fuelPathway",
+    "fuelClass",
+    "lcvMjPerG",
+    "wtWPerMj",
+    "ttwCo2eqPerG",
+    "wtwIntensity",
+    "rwd",
+    "etsCo2Cf",
+    "etsTtwAr5",
+    "etsNonCo2Ar5",
+    "cfCo2PerG",
+    "cfCh4PerG",
+    "cfN2oPerG",
+    "cslipPercent",
+    "consumerSource",
+    "notes",
+    "alias",
+  ],
+};
+
+const LIBRARY_COLUMN_LABELS = {
+  fuelReference: {
+    fuelPathway: "Fuel Pathway",
+    fuelClass: "Class",
+    lcvMjPerG: "LCV (MJ/g)",
+    wtWPerMj: "WtT (gCO2eq/MJ)",
+    ttwCo2eqPerG: "TtW CO2eq (gCO2eq/gFuel)",
+    wtwIntensity: "WtW intensity (gCO2eq/MJ)",
+    rwd: "RWD (RFNBO reward)",
+    etsCo2Cf: "ETS CO2 Cf (tCO2/t)",
+    etsTtwAr5: "ETS TtW CO2eq AR5 (gCO2eq/gFuel)",
+    alias: "Column 11",
+    etsNonCo2Ar5: "ETS non-CO2 TtW AR5 (gCO2eq/gFuel)",
+    cfCo2PerG: "Cf CO2 (g/gFuel)",
+    cfCh4PerG: "Cf CH4 (g/gFuel)",
+    cfN2oPerG: "Cf N2O (g/gFuel)",
+    cslipPercent: "Cslip (% mass)",
+    consumerSource: "Fuel consumer / source (Annex II)",
+    notes: "Notes",
+  },
+  fleet: {
+    imoNo: "IMO No.",
+    vesselName: "Vessel Name",
+    shipType: "Ship Type",
+    flag: "Flag",
+    className: "Class",
+    gt: "GT (GRT)",
+    nt: "NT (NRT)",
+    summerDwt: "Summer DWT",
+    built: "Built",
+    wapsFwindFactor: "WAPS Fwind factor",
+  },
+};
+
+const CALCULATOR_HISTORY_COLUMNS = [
+  { key: "recordId", label: "ID" },
+  { key: "type", label: "Type" },
+  { key: "vesselName", label: "Vessel" },
+  { key: "route", label: "Route" },
+  { key: "departureDate", label: "Departure" },
+  { key: "arrivalDate", label: "Arrival" },
+  { key: "euasRequiredT", label: "EUAs" },
+  { key: "attainedGhgIntensity", label: "GHG" },
+];
+
 function formatNumber(value, digits = 2) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -210,6 +278,35 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
 }
 
+function syncCalculatorDraftRowsWithDerived() {
+  const derivedById = new Map(stateStore.derived.calculatorRows.map((row) => [row.id, row]));
+  let changed = false;
+
+  stateStore.state.calculatorRows.forEach((row) => {
+    const derivedRow = derivedById.get(row.id);
+    if (!derivedRow) {
+      return;
+    }
+
+    if (!normalizeText(row.recordId) && normalizeText(derivedRow.recordId)) {
+      row.recordId = derivedRow.recordId;
+      changed = true;
+    }
+
+    if (!normalizeText(row.type) && normalizeText(derivedRow.type)) {
+      row.type = derivedRow.type;
+      changed = true;
+    }
+
+    if ((row.windFactor === null || row.windFactor === undefined || row.windFactor === "") && derivedRow.windFactor !== null && derivedRow.windFactor !== undefined && derivedRow.windFactor !== "") {
+      row.windFactor = Number(derivedRow.windFactor);
+      changed = true;
+    }
+  });
+
+  return changed;
+}
+
 function hydrateFromStorage(seedState) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -230,6 +327,9 @@ function getCollection(sheetKey) {
 
 function recomputeAndRender() {
   stateStore.derived = recalculateWorkbook(stateStore.state);
+  if (syncCalculatorDraftRowsWithDerived()) {
+    stateStore.derived = recalculateWorkbook(stateStore.state);
+  }
   stateStore.state.parameters = deepClone(stateStore.derived.parameters);
   saveState();
   render();
@@ -752,9 +852,13 @@ function calculatorCellValue(row, column) {
   return value ?? "";
 }
 
-function calculatorInputValue(row, column) {
-  const value = row[column.key];
-  return value ?? "";
+function calculatorInputValue(inputRow, derivedRow, column) {
+  const inputValue = inputRow[column.key];
+  if (inputValue !== null && inputValue !== undefined && inputValue !== "") {
+    return inputValue;
+  }
+  const derivedValue = derivedRow[column.key];
+  return derivedValue ?? "";
 }
 
 function renderCalculatorCell(row, inputRow, column, stickyLeft) {
@@ -792,7 +896,7 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
         <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
           <select class="calculator-grid-input input-orange" data-calc-cell="${column.key}" data-row-id="${row.id}">
             ${(column.options || [])
-              .map((option) => `<option value="${option}" ${calculatorInputValue(inputRow, column) === option ? "selected" : ""}>${option}</option>`)
+              .map((option) => `<option value="${option}" ${calculatorInputValue(inputRow, row, column) === option ? "selected" : ""}>${option}</option>`)
               .join("")}
           </select>
         </td>
@@ -806,7 +910,7 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
           data-calc-cell="${column.key}"
           data-row-id="${row.id}"
           type="${column.input}"
-          value="${calculatorInputValue(inputRow, column)}"
+          value="${calculatorInputValue(inputRow, row, column)}"
           ${column.placeholder ? `placeholder="${column.placeholder}"` : ""}
           ${column.list ? `list="${column.list}"` : ""}
           ${column.step ? `step="${column.step}"` : ""}
@@ -1803,7 +1907,7 @@ function ensureCalculatorSelection() {
   const rows = stateStore.derived.calculatorRows;
   const selected = rows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
   if (selected) return selected;
-  const fallback = rows.find((row) => row.recordId) || rows[0];
+  const fallback = rows[0] || rows.find((row) => row.recordId);
   stateStore.ui.calculatorSelectedId = fallback?.id || null;
   return fallback || null;
 }
@@ -1865,10 +1969,9 @@ function insertCalculatorRow(row) {
   stateStore.state.calculatorRows.splice(insertIndex + 1, 0, row);
 }
 
-function renderCalculator() {
-  ensureCalculatorSelection();
+function getFilteredCalculatorRows() {
   const searchTerm = lower(stateStore.ui.calculatorSearch);
-  const filteredRows = stateStore.derived.calculatorRows.filter((row) => {
+  return stateStore.derived.calculatorRows.filter((row) => {
     if (stateStore.ui.vesselFilter !== "all" && row.vesselName !== stateStore.ui.vesselFilter) {
       return false;
     }
@@ -1892,6 +1995,16 @@ function renderCalculator() {
       .filter(Boolean)
       .some((value) => lower(value).includes(searchTerm));
   });
+}
+
+function renderCalculator() {
+  ensureCalculatorSelection();
+  const filteredRows = getFilteredCalculatorRows();
+  const focusedRow = filteredRows.find((row) => row.id === stateStore.ui.calculatorSelectedId) || filteredRows[0] || null;
+  const historyRows = focusedRow ? filteredRows.filter((row) => row.id !== focusedRow.id) : [];
+  if (focusedRow && stateStore.ui.calculatorSelectedId !== focusedRow.id) {
+    stateStore.ui.calculatorSelectedId = focusedRow.id;
+  }
 
   const stickyColumns = CALCULATOR_COLUMNS.filter((column) => column.kind.startsWith("sticky"));
   let stickyOffset = 0;
@@ -1909,7 +2022,7 @@ function renderCalculator() {
       <div class="calculator-toolbar">
         <div class="calculator-toolbar-copy">
           <h2>Voyage Inputs</h2>
-          <p class="helper-text">Orange cells are editable inputs, including manual voyage IDs and type. Blue cells are workbook-driven outputs. Changes autosave when you leave a field, and the dashboard recalculates automatically.</p>
+          <p class="helper-text">Orange cells are editable inputs, including voyage ID and type. Blue cells are workbook-driven outputs. Only the current row stays open for editing so the grid feels much faster.</p>
         </div>
         <div class="calculator-actions">
           <input
@@ -1934,7 +2047,8 @@ function renderCalculator() {
         <div class="table-head">
           <div>
             <p class="eyebrow">Workbook Grid</p>
-            <h3>Voyage input rows${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
+            <h3>Active editable row${stateStore.ui.vesselFilter !== "all" ? ` for ${stateStore.ui.vesselFilter}` : ""}</h3>
+            <p class="helper-text">Only one row stays open for editing at a time. Earlier rows remain available in the history panel below.</p>
           </div>
           <span class="chip">${totalRows} rows · ${activeRows.length} active records</span>
         </div>
@@ -1960,24 +2074,79 @@ function renderCalculator() {
               </tr>
             </thead>
             <tbody>
-              ${filteredRows
-                .map((row) => {
-                  const inputRow = stateStore.state.calculatorRows.find((item) => item.id === row.id) || blankCalculatorRow();
-                  return `
-                    <tr class="${row.id === stateStore.ui.calculatorSelectedId ? "selected-row" : ""}" data-action="select-calculator-row" data-row-id="${row.id}">
-                      ${CALCULATOR_COLUMNS.map((column) => renderCalculatorCell(row, inputRow, column, stickyOffsets.get(column.key) || 0)).join("")}
-                    </tr>
-                  `;
-                })
-                .join("")}
+              ${
+                focusedRow
+                  ? (() => {
+                      const inputRow = stateStore.state.calculatorRows.find((item) => item.id === focusedRow.id) || blankCalculatorRow();
+                      return `
+                        <tr class="selected-row" data-action="select-calculator-row" data-row-id="${focusedRow.id}">
+                          ${CALCULATOR_COLUMNS.map((column) => renderCalculatorCell(focusedRow, inputRow, column, stickyOffsets.get(column.key) || 0)).join("")}
+                        </tr>
+                      `;
+                    })()
+                  : `<tr><td colspan="${CALCULATOR_COLUMNS.length}" class="no-data">No voyage rows match the current vessel filter and search.</td></tr>`
+              }
             </tbody>
           </table>
         </div>
+        ${
+          historyRows.length
+            ? `
+              <div class="calculator-history">
+                <button class="section-bar calculator-history-toggle" type="button" data-action="toggle-calculator-history">
+                  <span class="section-bar-main">
+                    <span class="section-chevron ${stateStore.ui.calculatorHistoryOpen ? "open" : ""}">&#9662;</span>
+                    <span class="section-title-group">
+                      <strong>Previous rows</strong>
+                      ${renderSectionBadge(`${historyRows.length} collapsed`)}
+                    </span>
+                  </span>
+                  <span class="section-bar-note">Open to switch the editable row without loading the full table at once</span>
+                </button>
+                <div class="section-body ${stateStore.ui.calculatorHistoryOpen ? "" : "collapsed"}">
+                  <div class="table-wrap calculator-history-wrap">
+                    <table class="calculator-history-table">
+                      <thead>
+                        <tr>
+                          ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<th>${column.label}</th>`).join("")}
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${historyRows
+                          .map(
+                            (row) => `
+                              <tr>
+                                ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<td>${renderCalculatorHistoryCell(row, column)}</td>`).join("")}
+                                <td><button class="inline-button compact-button button-violet" type="button" data-action="edit-calculator-row" data-row-id="${row.id}">Edit row</button></td>
+                              </tr>
+                            `
+                          )
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            `
+            : ""
+        }
           </article>
         `,
       })}
     </section>
   `;
+}
+
+function renderCalculatorHistoryCell(row, column) {
+  const value = row[column.key];
+  if (column.key === "departureDate" || column.key === "arrivalDate") {
+    return formatDateValue(value);
+  }
+  if (column.key === "euasRequiredT" || column.key === "attainedGhgIntensity") {
+    return `<span class="number-cell">${formatNumber(value, 2)}</span>`;
+  }
+  return value || "-";
 }
 
 function getSheetRowsForDisplay(sheetKey) {
@@ -2002,6 +2171,27 @@ function renderLibraryTabs() {
   ).join("");
 }
 
+function getLibraryDisplayColumns(sheetKey) {
+  return LIBRARY_DISPLAY_COLUMNS[sheetKey] || SHEET_COLUMNS[sheetKey] || [];
+}
+
+function getLibraryColumnLabel(sheetKey, column) {
+  return LIBRARY_COLUMN_LABELS[sheetKey]?.[column] || column;
+}
+
+function formatLibraryValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  if (typeof value === "number") {
+    if (Number.isInteger(value)) {
+      return formatInteger(value);
+    }
+    return formatNumber(value, Math.abs(value) < 10 ? 4 : 2);
+  }
+  return value;
+}
+
 function renderLibraryContent() {
   const sheetKey = stateStore.ui.librarySheet;
   const allRows = getSheetRowsForDisplay(sheetKey);
@@ -2015,8 +2205,7 @@ function renderLibraryContent() {
     stateStore.ui.libraryPage = pageCount;
   }
   const pageRows = filteredRows.slice((stateStore.ui.libraryPage - 1) * PAGE_SIZE, stateStore.ui.libraryPage * PAGE_SIZE);
-  const columns = SHEET_COLUMNS[sheetKey];
-  const visibleColumns = columns.slice(0, Math.min(columns.length, 5));
+  const visibleColumns = getLibraryDisplayColumns(sheetKey);
 
   elements.libraryContent.innerHTML = `
     <div class="library-toolbar">
@@ -2040,7 +2229,7 @@ function renderLibraryContent() {
       <table>
         <thead>
           <tr>
-            ${visibleColumns.map((column) => `<th>${column}</th>`).join("")}
+            ${visibleColumns.map((column) => `<th>${getLibraryColumnLabel(sheetKey, column)}</th>`).join("")}
             <th>Actions</th>
           </tr>
         </thead>
@@ -2049,7 +2238,7 @@ function renderLibraryContent() {
             .map(
               (row) => `
                 <tr>
-                  ${visibleColumns.map((column) => `<td>${row[column] ?? "-"}</td>`).join("")}
+                  ${visibleColumns.map((column) => `<td>${formatLibraryValue(row[column])}</td>`).join("")}
                   <td>
                     <div class="toolbar-actions">
                       <button class="inline-button" type="button" data-action="open-row-editor" data-sheet="${sheetKey}" data-row-id="${row.id}">Edit</button>
@@ -2414,6 +2603,12 @@ function handleMainClick(event) {
     return;
   }
 
+  if (action === "edit-calculator-row") {
+    stateStore.ui.calculatorSelectedId = rowId;
+    render();
+    return;
+  }
+
   if (action === "duplicate-calculator-row") {
     const selected = stateStore.state.calculatorRows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
     if (!selected) return;
@@ -2465,6 +2660,12 @@ function handleMainClick(event) {
 
   if (action === "toggle-calculator") {
     stateStore.ui.calculatorOpen = !stateStore.ui.calculatorOpen;
+    render();
+    return;
+  }
+
+  if (action === "toggle-calculator-history") {
+    stateStore.ui.calculatorHistoryOpen = !stateStore.ui.calculatorHistoryOpen;
     render();
     return;
   }
@@ -2533,6 +2734,9 @@ async function bootstrap() {
   stateStore.seedState = createStateFromSeed(seed);
   stateStore.state = hydrateFromStorage(stateStore.seedState);
   stateStore.derived = recalculateWorkbook(stateStore.state);
+  if (syncCalculatorDraftRowsWithDerived()) {
+    stateStore.derived = recalculateWorkbook(stateStore.state);
+  }
   stateStore.state.parameters = deepClone(stateStore.derived.parameters);
   ensureCalculatorSelection();
 
@@ -2564,16 +2768,18 @@ async function bootstrap() {
   elements.libraryContent.addEventListener("click", handleLibraryClick);
   elements.libraryContent.addEventListener("input", handleLibraryInput);
   elements.exportFilteredButton.addEventListener("click", exportFilteredData);
-  elements.resetWorkbookButton.addEventListener("click", () => {
-    stateStore.state = deepClone(stateStore.seedState);
-    stateStore.ui.calculatorSelectedId = null;
-    stateStore.ui.drilldown = null;
-    stateStore.ui.detailSearch = "";
-    stateStore.ui.detailScope = "all";
-    stateStore.ui.projection = { ...PROJECTION_BASELINE };
-    stateStore.ui.projectionPreset = "baseline";
-    recomputeAndRender();
-  });
+  if (elements.resetWorkbookButton) {
+    elements.resetWorkbookButton.addEventListener("click", () => {
+      stateStore.state = deepClone(stateStore.seedState);
+      stateStore.ui.calculatorSelectedId = null;
+      stateStore.ui.drilldown = null;
+      stateStore.ui.detailSearch = "";
+      stateStore.ui.detailScope = "all";
+      stateStore.ui.projection = { ...PROJECTION_BASELINE };
+      stateStore.ui.projectionPreset = "baseline";
+      recomputeAndRender();
+    });
+  }
   elements.closeEditorButton.addEventListener("click", () => {
     stateStore.ui.dialog = null;
     elements.rowEditorDialog.close();
