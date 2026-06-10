@@ -817,7 +817,7 @@ tbody tr:hover {
   display: grid;
   gap: 10px;
   min-width: 0;
-  overflow-x: hidden;
+  overflow: visible;
 }
 
 .calculator-toolbar {
@@ -963,7 +963,7 @@ tbody tr:hover {
 }
 
 .calculator-table-wrap {
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: auto;
   max-height: calc(100vh - 220px);
   border-radius: 8px;
@@ -971,9 +971,12 @@ tbody tr:hover {
   background: rgba(255, 255, 255, 0.78);
   max-width: 100%;
   width: 100%;
+  min-width: 0;
   scrollbar-gutter: stable both-edges;
   display: block;
   padding-bottom: 6px;
+  overscroll-behavior-x: contain;
+  position: relative;
 }
 
 .calculator-table {
@@ -1078,7 +1081,7 @@ tbody tr:hover {
 .compact-table-card {
   padding: 8px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .detail-table-card {
@@ -1120,11 +1123,14 @@ tbody tr:hover {
 
 .detail-table-wrap {
   margin-top: 10px;
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: auto;
   width: 100%;
+  min-width: 0;
   display: block;
   padding-bottom: 6px;
+  overscroll-behavior-x: contain;
+  position: relative;
 }
 
 .detail-table {
@@ -1166,13 +1172,26 @@ tbody tr:hover {
 .calculator-history-wrap {
   margin-top: 0;
   max-height: 320px;
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: auto;
+  min-width: 0;
+  scrollbar-gutter: stable both-edges;
+  padding-bottom: 6px;
+  overscroll-behavior-x: contain;
+  position: relative;
 }
 
 .calculator-history-table {
   width: max-content;
   min-width: 100%;
+}
+
+.history-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 156px;
 }
 
 .table-wrap::-webkit-scrollbar,

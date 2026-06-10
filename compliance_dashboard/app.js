@@ -62,8 +62,10 @@ const stateStore = {
     calculatorSearch: "",
     calculatorColumnMenuOpen: false,
     calculatorVisibleColumns: [],
+    calculatorScrollLeft: 0,
     detailSearch: "",
     detailScope: "all",
+    detailScrollLeft: 0,
     calculatorSelectedId: null,
     calculatorHistoryOpen: false,
     libraryOpen: false,
@@ -344,6 +346,38 @@ function countRowsForYear(year) {
   return stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row) && resolveRowStorageYear(row) === year).length;
 }
 
+function compareCalculatorRows(a, b) {
+  const yearDiff = resolveRowStorageYear(b) - resolveRowStorageYear(a);
+  if (yearDiff !== 0) return yearDiff;
+
+  const vesselDiff = String(a.vesselName || "").localeCompare(String(b.vesselName || ""));
+  if (vesselDiff !== 0) return vesselDiff;
+
+  const departureA = String(a.departureDate || "");
+  const departureB = String(b.departureDate || "");
+  const departureDiff = departureA.localeCompare(departureB);
+  if (departureDiff !== 0) return departureDiff;
+
+  const arrivalA = String(a.arrivalDate || "");
+  const arrivalB = String(b.arrivalDate || "");
+  const arrivalDiff = arrivalA.localeCompare(arrivalB);
+  if (arrivalDiff !== 0) return arrivalDiff;
+
+  return String(a.recordId || "").localeCompare(String(b.recordId || ""));
+}
+
+function pruneCalculatorDraftRows(keepIds = []) {
+  const keep = new Set(keepIds.filter(Boolean));
+  stateStore.state.calculatorRows = stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row) || keep.has(row.id));
+}
+
+function sortCalculatorRowsInPlace() {
+  const drafts = stateStore.state.calculatorRows.filter((row) => !rowHasMeaningfulInputs(row));
+  const saved = stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row));
+  saved.sort(compareCalculatorRows);
+  stateStore.state.calculatorRows = [...drafts, ...saved];
+}
+
 function getVisibleCalculatorColumnKeys() {
   const selected = Array.isArray(stateStore.ui.calculatorVisibleColumns) && stateStore.ui.calculatorVisibleColumns.length
     ? stateStore.ui.calculatorVisibleColumns
@@ -357,17 +391,22 @@ function getVisibleCalculatorColumns() {
   return CALCULATOR_COLUMNS.filter((column) => keys.includes(column.key));
 }
 
-function estimateCalculatorColumnWidth(column, row, inputRow) {
+function estimateCalculatorColumnWidth(column, rows, inputRowsById) {
   if (column.key === "rowActions") {
-    return 110;
+    return 180;
   }
-  const displayValue = column.kind.includes("editable")
-    ? String(calculatorInputValue(inputRow, row, column) ?? "")
-    : String(calculatorCellValue(row, column) ?? "");
-  const sourceLength = Math.max(column.label.length, displayValue.length, column.placeholder?.length || 0);
+  const sampleRows = rows.slice(0, 16);
+  const maxValueLength = sampleRows.reduce((max, row) => {
+    const inputRow = inputRowsById.get(row.id) || blankCalculatorRow();
+    const displayValue = column.kind.includes("editable")
+      ? String(calculatorInputValue(inputRow, row, column) ?? "")
+      : String(calculatorCellValue(row, column) ?? "");
+    return Math.max(max, displayValue.length);
+  }, 0);
+  const sourceLength = Math.max(column.label.length, maxValueLength, column.placeholder?.length || 0);
   const charWidth = column.kind.includes("editable") ? 8.1 : 7.6;
   const minWidth = Math.min(column.width || 100, 120);
-  const maxWidth = column.kind.includes("calculated") ? 240 : 220;
+  const maxWidth = column.kind.includes("calculated") ? 260 : 240;
   return Math.max(minWidth, Math.min(maxWidth, Math.round(sourceLength * charWidth + 34)));
 }
 
@@ -423,6 +462,14 @@ function recomputeAndRender() {
   if (syncCalculatorDraftRowsWithDerived()) {
     stateStore.derived = recalculateWorkbook(stateStore.state);
   }
+  if (!stateStore.state.calculatorRows.some((row) => !rowHasMeaningfulInputs(row))) {
+    const selectedStateRow = getCalculatorStateRow(stateStore.ui.calculatorSelectedId);
+    const draftRow = buildCalculatorRowForCurrentFilter(selectedStateRow && rowHasMeaningfulInputs(selectedStateRow) ? selectedStateRow : null);
+    stateStore.state.calculatorRows.unshift(draftRow);
+    stateStore.ui.calculatorSelectedId = draftRow.id;
+    stateStore.derived = recalculateWorkbook(stateStore.state);
+  }
+  pruneCalculatorDraftRows([stateStore.ui.calculatorSelectedId]);
   stateStore.state.parameters = deepClone(stateStore.derived.parameters);
   saveState();
   render();
@@ -1000,7 +1047,7 @@ function updateInlineSuggestions(input, columnKey, rawValue) {
   datalist.innerHTML = options.map((option) => `<option value="${option.value}">${option.label || option.value}</option>`).join("");
 }
 
-function renderCalculatorCell(row, inputRow, column, stickyLeft) {
+function renderCalculatorCell(row, inputRow, column, stickyLeft, context = "active") {
   const classes = ["calculator-cell"];
   const styleParts = [`min-width:${column.width}px`, `width:${column.width}px`];
 
@@ -1022,6 +1069,16 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
   }
 
   if (column.key === "rowActions") {
+    if (context === "history") {
+      return `
+        <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
+          <div class="history-row-actions">
+            <button class="inline-button compact-button" type="button" data-action="insert-calculator-after" data-row-id="${row.id}">Insert below</button>
+            <button class="inline-button compact-button button-red" type="button" data-action="delete-calculator-row" data-row-id="${row.id}">Delete</button>
+          </div>
+        </td>
+      `;
+    }
     return `
       <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
         <button class="inline-button compact-button" type="button" data-action="delete-calculator-row" data-row-id="${row.id}">Delete</button>
@@ -1033,7 +1090,7 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
     if (column.input === "select") {
       return `
         <td class="${classes.join(" ")}" style="${styleParts.join(";")}">
-          <select class="calculator-grid-input input-orange" data-calc-cell="${column.key}" data-row-id="${row.id}">
+          <select class="calculator-grid-input input-orange" data-calc-cell="${column.key}" data-row-id="${row.id}" data-row-context="${context}">
             ${(column.options || [])
               .map((option) => `<option value="${option}" ${calculatorInputValue(inputRow, row, column) === option ? "selected" : ""}>${option}</option>`)
               .join("")}
@@ -1048,6 +1105,7 @@ function renderCalculatorCell(row, inputRow, column, stickyLeft) {
           class="calculator-grid-input input-orange"
           data-calc-cell="${column.key}"
           data-row-id="${row.id}"
+          data-row-context="${context}"
           type="${column.input}"
           value="${calculatorInputValue(inputRow, row, column)}"
           ${column.placeholder ? `placeholder="${column.placeholder}"` : ""}
@@ -1377,6 +1435,7 @@ function renderUnifiedDetailSection() {
   const filteredRows = getDetailRows();
   const showProjection = projectionIsActive();
   const visibleColumns = showProjection ? DETAIL_TABLE_COLUMNS : DETAIL_TABLE_COLUMNS.filter((column) => !column.proj);
+  const detailTableWidth = visibleColumns.reduce((sum, column) => sum + (column.width || 120), 0);
   const drilldown = stateStore.ui.drilldown;
   const totalEuas = filteredRows.reduce((sum, row) => sum + numberOrZero(row.euasRequiredT), 0);
   const totalCost = filteredRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
@@ -1431,8 +1490,8 @@ function renderUnifiedDetailSection() {
           ${showProjection ? `<span class="chip projection-chip">Projected EUAs ${formatNumber(projectedEuas, 1)} t</span><span class="chip projection-chip ${projectedBalance >= 0 ? "tag-good" : "tag-risk"}">Projected balance ${projectedBalance >= 0 ? "+" : ""}${formatNumber(projectedBalance, 1)} t</span>` : ""}
         </div>
 
-        <div class="table-wrap dense-table-wrap detail-table-wrap">
-          <table class="detail-table">
+        <div class="table-wrap dense-table-wrap detail-table-wrap" data-scroll-group="detail">
+          <table class="detail-table" style="width:${detailTableWidth}px;min-width:${detailTableWidth}px">
             <thead>
               <tr>
                 ${visibleColumns
@@ -2045,12 +2104,19 @@ function renderDashboardCharts() {
 }
 
 function ensureCalculatorSelection() {
-  const rows = stateStore.derived.calculatorRows.filter((row) => rowHasMeaningfulInputs(getCalculatorStateRow(row.id)));
-  const selected = rows.find((row) => row.id === stateStore.ui.calculatorSelectedId);
-  if (selected) return selected;
-  const fallback = rows[0] || stateStore.derived.calculatorRows[0];
+  const selectedStateRow = getCalculatorStateRow(stateStore.ui.calculatorSelectedId);
+  if (selectedStateRow && !rowHasMeaningfulInputs(selectedStateRow)) {
+    return stateStore.derived.calculatorRows.find((row) => row.id === selectedStateRow.id) || null;
+  }
+
+  const draftStateRow = stateStore.state.calculatorRows.find((row) => !rowHasMeaningfulInputs(row));
+  if (draftStateRow) {
+    stateStore.ui.calculatorSelectedId = draftStateRow.id;
+    return stateStore.derived.calculatorRows.find((row) => row.id === draftStateRow.id) || null;
+  }
+  const fallback = getMeaningfulDerivedRows()[0] || stateStore.derived.calculatorRows[0] || null;
   stateStore.ui.calculatorSelectedId = fallback?.id || null;
-  return fallback || null;
+  return fallback;
 }
 
 function nextRecordSerial(type) {
@@ -2064,7 +2130,7 @@ function nextRecordSerial(type) {
   return `${prefix}${String(next).padStart(3, "0")}`;
 }
 
-function buildCalculatorRowForCurrentFilter() {
+function buildCalculatorRowForCurrentFilter(sourceRow = null) {
   const row = blankCalculatorRow();
   let targetYear = getCurrentReportYear();
   while (countRowsForYear(targetYear) >= MAX_CALCULATOR_ROWS_PER_YEAR) {
@@ -2073,14 +2139,6 @@ function buildCalculatorRowForCurrentFilter() {
   row.storageYear = targetYear;
   row.type = "Voyage";
   row.recordId = nextRecordSerial(row.type);
-  if (stateStore.ui.vesselFilter === "all") {
-    return row;
-  }
-
-  const vesselRows = stateStore.derived.calculatorRows.filter((item) => item.vesselName === stateStore.ui.vesselFilter);
-  const lastVesselRow = vesselRows[vesselRows.length - 1];
-  const sourceRow = stateStore.state.calculatorRows.find((item) => item.id === lastVesselRow?.id);
-
   if (sourceRow?.imoNo) {
     row.imoNo = sourceRow.imoNo;
   }
@@ -2103,10 +2161,45 @@ function buildCalculatorRowForCurrentFilter() {
     row.storageYear = sourceRow.storageYear;
   }
 
+  if (sourceRow) {
+    return row;
+  }
+
+  if (stateStore.ui.vesselFilter === "all") {
+    return row;
+  }
+
+  const vesselRows = stateStore.derived.calculatorRows.filter((item) => item.vesselName === stateStore.ui.vesselFilter);
+  const lastVesselRow = vesselRows[vesselRows.length - 1];
+  const filterSourceRow = stateStore.state.calculatorRows.find((item) => item.id === lastVesselRow?.id);
+
+  if (filterSourceRow?.imoNo) {
+    row.imoNo = filterSourceRow.imoNo;
+  }
+
+  if (filterSourceRow?.windFactor !== undefined && filterSourceRow?.windFactor !== null) {
+    row.windFactor = filterSourceRow.windFactor;
+  }
+
+  if (filterSourceRow?.type === "Voyage" || filterSourceRow?.type === "Port Stay") {
+    row.type = filterSourceRow.type;
+    row.recordId = nextRecordSerial(row.type);
+  }
+
+  if (filterSourceRow?.storageYear) {
+    row.storageYear = filterSourceRow.storageYear;
+  }
   return row;
 }
 
-function insertCalculatorRow(row) {
+function insertCalculatorRow(row, insertAfterRowId = null) {
+  if (insertAfterRowId) {
+    const sourceIndex = stateStore.state.calculatorRows.findIndex((item) => item.id === insertAfterRowId);
+    if (sourceIndex >= 0) {
+      stateStore.state.calculatorRows.splice(sourceIndex + 1, 0, row);
+      return;
+    }
+  }
   if (stateStore.ui.vesselFilter === "all") {
     stateStore.state.calculatorRows.unshift(row);
     return;
@@ -2122,6 +2215,17 @@ function insertCalculatorRow(row) {
   }
 
   stateStore.state.calculatorRows.splice(insertIndex + 1, 0, row);
+}
+
+function ensureDraftRow(sourceRow = null, insertAfterRowId = null) {
+  let draftRow = stateStore.state.calculatorRows.find((row) => !rowHasMeaningfulInputs(row));
+  if (!draftRow) {
+    draftRow = buildCalculatorRowForCurrentFilter(sourceRow);
+    insertCalculatorRow(draftRow, insertAfterRowId);
+  }
+  stateStore.ui.calculatorSelectedId = draftRow.id;
+  pruneCalculatorDraftRows([draftRow.id]);
+  return draftRow;
 }
 
 function getFilteredCalculatorRows() {
@@ -2178,6 +2282,7 @@ function renderCalculator() {
     stickyOffsets.set(column.key, stickyOffset);
     stickyOffset += computedWidths.get(column.key) || column.width || 120;
   });
+  const totalTableWidth = visibleColumns.reduce((sum, column) => sum + (computedWidths.get(column.key) || column.width || 120), 0);
 
   const totalRows = filteredRows.length;
   const activeRows = filteredRows.filter((row) => rowHasMeaningfulInputs(getCalculatorStateRow(row.id)));
@@ -2245,8 +2350,8 @@ function renderCalculator() {
           </div>
           <span class="chip">${totalRows} rows / ${activeRows.length} active records</span>
         </div>
-        <div class="calculator-table-wrap">
-          <table class="calculator-table">
+        <div class="calculator-table-wrap" data-scroll-group="calculator">
+          <table class="calculator-table" style="width:${totalTableWidth}px;min-width:${totalTableWidth}px">
             <thead>
               <tr>
                 ${visibleColumns.map((column) => {
@@ -2282,23 +2387,12 @@ function renderCalculator() {
             </tbody>
           </table>
         </div>
-        ${renderCalculatorHistory(historyRows)}
+        ${renderCalculatorHistory(historyRows, visibleColumns, computedWidths, stickyOffsets, totalTableWidth)}
           </article>
         `,
       })}
     </section>
   `;
-}
-
-function renderCalculatorHistoryCell(row, column) {
-  const value = row[column.key];
-  if (column.key === "departureDate" || column.key === "arrivalDate") {
-    return formatDateValue(value);
-  }
-  if (column.key === "euasRequiredT" || column.key === "attainedGhgIntensity") {
-    return `<span class="number-cell">${formatNumber(value, 2)}</span>`;
-  }
-  return value || "-";
 }
 
 function groupCalculatorRowsByYear(rows) {
@@ -2313,7 +2407,7 @@ function groupCalculatorRowsByYear(rows) {
   return [...grouped.entries()].sort((a, b) => Number(b[0]) - Number(a[0]));
 }
 
-function renderCalculatorHistory(historyRows) {
+function renderCalculatorHistory(historyRows, visibleColumns, computedWidths, stickyOffsets, totalTableWidth) {
   if (!historyRows.length) {
     return "";
   }
@@ -2342,25 +2436,45 @@ function renderCalculatorHistory(historyRows) {
                     <strong>${year}</strong>
                     <span class="chip">${rows.length} rows / ${MAX_CALCULATOR_ROWS_PER_YEAR} max</span>
                   </div>
-                  <div class="table-wrap calculator-history-wrap">
-                    <table class="calculator-history-table">
+                  <div class="table-wrap calculator-history-wrap" data-scroll-group="calculator">
+                    <table class="calculator-history-table" style="width:${totalTableWidth}px;min-width:${totalTableWidth}px">
                       <thead>
                         <tr>
-                          ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<th>${column.label}</th>`).join("")}
-                          <th>Source</th>
-                          <th>Action</th>
+                          ${visibleColumns.map((column) => {
+                            const columnWidth = computedWidths.get(column.key) || column.width || 120;
+                            const classes = ["calculator-header"];
+                            const styleParts = [`min-width:${columnWidth}px`, `width:${columnWidth}px`];
+                            if (column.kind.includes("sticky")) {
+                              classes.push("sticky-header");
+                              styleParts.push(`left:${stickyOffsets.get(column.key) || 0}px`);
+                            } else if (column.kind.includes("editable")) {
+                              classes.push("editable-header");
+                            } else if (column.kind.includes("calculated")) {
+                              classes.push("calculated-header");
+                            } else if (column.kind === "actions") {
+                              classes.push("actions-header");
+                            }
+                            return `<th class="${classes.join(" ")}" style="${styleParts.join(";")}">${column.label}</th>`;
+                          }).join("")}
                         </tr>
                       </thead>
                       <tbody>
                         ${rows
                           .map((row) => {
                             const sourceRow = getCalculatorStateRow(row.id);
-                            const sourceLabel = sourceRow?.sourceSystem || (sourceRow?.entrySource === "api" ? "API feed" : "Manual");
                             return `
                               <tr>
-                                ${CALCULATOR_HISTORY_COLUMNS.map((column) => `<td>${renderCalculatorHistoryCell(row, column)}</td>`).join("")}
-                                <td>${sourceLabel}</td>
-                                <td><button class="inline-button compact-button button-violet" type="button" data-action="edit-calculator-row" data-row-id="${row.id}">Edit row</button></td>
+                                ${visibleColumns
+                                  .map((column) =>
+                                    renderCalculatorCell(
+                                      row,
+                                      sourceRow || blankCalculatorRow(),
+                                      { ...column, width: computedWidths.get(column.key) || column.width || 120 },
+                                      stickyOffsets.get(column.key) || 0,
+                                      "history"
+                                    )
+                                  )
+                                  .join("")}
                               </tr>
                             `;
                           })
@@ -2520,6 +2634,7 @@ function render() {
   }
   buildDataLists();
   renderContent();
+  wireContentScrollRegions();
   renderLibraryDrawer();
 }
 
@@ -2556,47 +2671,90 @@ function downloadText(filename, content, type = "text/plain") {
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 250);
+}
+
+function wireScrollGroup(selector, stateKey) {
+  const regions = [...elements.contentView.querySelectorAll(selector)];
+  if (!regions.length) {
+    return;
+  }
+
+  const savedScrollLeft = Number(stateStore.ui[stateKey] || 0);
+  regions.forEach((region) => {
+    region.scrollLeft = savedScrollLeft;
+  });
+
+  let syncing = false;
+  regions.forEach((region) => {
+    region.addEventListener(
+      "scroll",
+      () => {
+        if (syncing) {
+          return;
+        }
+        syncing = true;
+        const nextScrollLeft = region.scrollLeft;
+        stateStore.ui[stateKey] = nextScrollLeft;
+        regions.forEach((otherRegion) => {
+          if (otherRegion !== region && Math.abs(otherRegion.scrollLeft - nextScrollLeft) > 1) {
+            otherRegion.scrollLeft = nextScrollLeft;
+          }
+        });
+        syncing = false;
+      },
+      { passive: true }
+    );
+  });
+}
+
+function wireContentScrollRegions() {
+  wireScrollGroup('[data-scroll-group="detail"]', "detailScrollLeft");
+  wireScrollGroup('[data-scroll-group="calculator"]', "calculatorScrollLeft");
+}
+
+function exportValueForColumn(row, column) {
+  const value = row[column.key];
+  if (column.format === "date") return formatDateValue(value);
+  if (column.format === "currency") return value === null || value === undefined || value === "" ? "" : Number(value);
+  if (column.format === "number" || column.format === "ghg" || column.format === "balance") {
+    return value === null || value === undefined || value === "" ? "" : Number(value);
+  }
+  if (column.format === "scope") return numberOrZero(value);
+  return value ?? "";
 }
 
 function exportFilteredData() {
-  const activeRows = getActiveRows();
-  const vesselSummary = computeFilteredDashboard(activeRows).byVessel;
   const slug = stateStore.ui.vesselFilter === "all" ? "all-vessels" : stateStore.ui.vesselFilter.toLowerCase().replaceAll(/\s+/g, "-");
+  if (stateStore.ui.activeView === "dashboard") {
+    const visibleColumns = projectionIsActive() ? DETAIL_TABLE_COLUMNS : DETAIL_TABLE_COLUMNS.filter((column) => !column.proj);
+    const rows = getDetailRows();
+    const csv = [
+      visibleColumns.map((column) => csvEscape(column.label)).join(","),
+      ...rows.map((row) => visibleColumns.map((column) => csvEscape(exportValueForColumn(row, column))).join(",")),
+    ].join("\n");
+    downloadText(`fuel-ets-${slug}-dashboard-detail.csv`, csv, "text/csv");
+    return;
+  }
 
-  const calculatorHeaders = ["Record", "Vessel", "Route", "Type", "EUAs Required", "ETS Cost", "GHG Intensity", "Compliance Balance", "FuelEU Penalty"];
-  const calculatorCsv = [
-    calculatorHeaders.map(csvEscape).join(","),
-    ...activeRows.map((row) =>
-      [
-        row.recordId,
-        row.vesselName,
-        row.route,
-        row.type,
-        formatNumber(row.euasRequiredT, 3),
-        formatCurrency(row.euasCostEur),
-        formatNumber(row.attainedGhgIntensity, 3),
-        formatNumber(row.complianceBalanceT, 3),
-        formatCurrency(row.fuelEuPenaltyEur),
-      ]
-        .map(csvEscape)
+  const visibleColumns = getVisibleCalculatorColumns().filter((column) => column.key !== "rowActions");
+  const rows = getFilteredCalculatorRows().filter((row) => rowHasMeaningfulInputs(getCalculatorStateRow(row.id)));
+  const csv = [
+    visibleColumns.map((column) => csvEscape(column.label)).join(","),
+    ...rows.map((row) =>
+      visibleColumns
+        .map((column) => {
+          const inputRow = getCalculatorStateRow(row.id) || blankCalculatorRow();
+          const value = column.kind.includes("editable") ? calculatorInputValue(inputRow, row, column) : calculatorCellValue(row, column);
+          return csvEscape(value);
+        })
         .join(",")
     ),
   ].join("\n");
-
-  const summaryHeaders = ["Vessel", "EUAs Required", "EUA Cost", "Avg GHG Intensity"];
-  const summaryCsv = [
-    summaryHeaders.map(csvEscape).join(","),
-    ...vesselSummary.map((row) =>
-      [row.vesselName, formatNumber(row.euasRequired, 3), formatCurrency(row.euasCost), formatNumber(row.averageIntensity, 3)]
-        .map(csvEscape)
-        .join(",")
-    ),
-  ].join("\n");
-
-  downloadText(`fuel-ets-${slug}-calculator.csv`, calculatorCsv, "text/csv");
-  downloadText(`fuel-ets-${slug}-summary.csv`, summaryCsv, "text/csv");
+  downloadText(`fuel-ets-${slug}-voyage-inputs.csv`, csv, "text/csv");
 }
 
 function mapExternalRowToCalculatorRow(sourceSystem, payload = {}) {
@@ -2713,12 +2871,18 @@ function setCalculatorRowValue(row, field, rawValue) {
   }
 }
 
-function updateCalculatorCell(rowId, field, rawValue, commit = true) {
+function updateCalculatorCell(rowId, field, rawValue, commit = true, context = "active") {
   const row = stateStore.state.calculatorRows.find((item) => item.id === rowId);
   if (!row) return;
   setCalculatorRowValue(row, field, rawValue);
-  stateStore.ui.calculatorSelectedId = rowId;
+  if (context === "active") {
+    stateStore.ui.calculatorSelectedId = rowId;
+  }
   if (commit) {
+    sortCalculatorRowsInPlace();
+    if (context === "active" && rowHasMeaningfulInputs(row)) {
+      ensureDraftRow(row, row.id);
+    }
     recomputeAndRender();
   }
 }
@@ -2960,6 +3124,15 @@ function handleMainClick(event) {
     return;
   }
 
+  if (action === "insert-calculator-after") {
+    const sourceStateRow = getCalculatorStateRow(rowId);
+    const row = buildCalculatorRowForCurrentFilter(sourceStateRow);
+    insertCalculatorRow(row, rowId);
+    stateStore.ui.calculatorSelectedId = row.id;
+    recomputeAndRender();
+    return;
+  }
+
   if (action === "close-drilldown") {
     closeDrilldown();
     return;
@@ -3021,11 +3194,12 @@ function handleMainInput(event) {
   const calcCell = event.target.dataset.calcCell;
   if (calcCell) {
     updateInlineSuggestions(event.target, calcCell, event.target.value);
+    const rowContext = event.target.dataset.rowContext || "active";
     if (event.type === "input") {
-      updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, false);
+      updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, false, rowContext);
       return;
     }
-    updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, true);
+    updateCalculatorCell(event.target.dataset.rowId, calcCell, event.target.value, true, rowContext);
     return;
   }
 
