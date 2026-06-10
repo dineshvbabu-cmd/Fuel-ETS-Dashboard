@@ -663,8 +663,8 @@ function renderDashboard() {
           <article class="chart-card">
             <div class="table-head">
               <div>
-                <p class="eyebrow">By Vessel</p>
-                <h3>EUAs Required by Vessel (t CO2eq)</h3>
+                <p class="eyebrow">By Voyage</p>
+                <h3>EUAs Required Trend by Voyage (t CO2eq)</h3>
               </div>
             </div>
             <div class="chart-canvas-wrap"><canvas id="vesselEuaChart"></canvas></div>
@@ -711,6 +711,7 @@ function renderDashboardCharts() {
   const activeRows = getActiveRows();
   const dashboard = computeFilteredDashboard(activeRows);
   const voyageRows = dashboard.voyageRows.filter((row) => row.attainedGhgIntensity !== null);
+  const euaTrendRows = dashboard.voyageRows.filter((row) => row.euasRequiredT !== null);
 
   const vesselCanvas = document.getElementById("vesselEuaChart");
   const ghgCanvas = document.getElementById("voyageGhgChart");
@@ -719,15 +720,22 @@ function renderDashboardCharts() {
 
   if (vesselCanvas) {
     stateStore.charts.vesselEua = new Chart(vesselCanvas, {
-      type: "bar",
+      type: "line",
       data: {
-        labels: dashboard.byVessel.map((row) => row.vesselName),
+        labels: euaTrendRows.map((row) => row.recordId),
         datasets: [
           {
             label: "EUAs required",
-            data: dashboard.byVessel.map((row) => row.euasRequired),
-            backgroundColor: "#4288d6",
-            borderRadius: 8,
+            data: euaTrendRows.map((row) => row.euasRequiredT),
+            borderColor: "#d78a1f",
+            backgroundColor: "rgba(215, 138, 31, 0.16)",
+            pointBackgroundColor: "#d78a1f",
+            pointBorderColor: "#d78a1f",
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            borderWidth: 3,
+            tension: 0.28,
+            fill: true,
           },
         ],
       },
@@ -737,21 +745,26 @@ function renderDashboardCharts() {
         onClick: (_, elementsClicked) => {
           if (!elementsClicked.length) return;
           const index = elementsClicked[0].index;
-          const vesselName = dashboard.byVessel[index]?.vesselName;
-          const rows = activeRows.filter((row) => row.vesselName === vesselName);
+          const row = euaTrendRows[index];
+          if (!row) return;
           openDrilldown(
-            `EUAs for ${vesselName}`,
-            "Voyage and port stay rows contributing to the vessel total.",
-            ["Record", "Type", "Route", "EUAs Required", "ETS Cost", "GHG Intensity"],
-            rows.map((row) => [
+            `Voyage EUA trend ${row.recordId}`,
+            row.route,
+            ["Record", "Vessel", "Type", "EUAs Required", "ETS Cost", "GHG Intensity"],
+            [[
               row.recordId,
+              row.vesselName,
               row.type,
-              row.route,
               formatNumber(row.euasRequiredT, 3),
               formatCurrency(row.euasCostEur),
               formatNumber(row.attainedGhgIntensity, 3),
-            ])
+            ]]
           );
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+          },
         },
       },
     });
