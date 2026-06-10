@@ -50,6 +50,11 @@ const stateStore = {
   state: null,
   derived: null,
   charts: {},
+  market: {
+    status: "idle",
+    snapshot: null,
+    error: null,
+  },
   ui: {
     activeView: "dashboard",
     vesselFilter: "all",
@@ -171,6 +176,17 @@ function formatCurrency(value) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(Number(value));
+}
+
+function formatUsdCurrency(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
     maximumFractionDigits: 0,
   }).format(Number(value));
 }
@@ -615,6 +631,109 @@ function toneClass(value) {
   if (value > 0) return "tag-good";
   if (value < 0) return "tag-risk";
   return "muted";
+}
+
+function totalOperationalCostEur(row) {
+  return numberOrZero(row.euasCostEur) + numberOrZero(row.fuelEuPenaltyEur);
+}
+
+function surplusValueUsd(row) {
+  return Math.max(0, numberOrZero(row.complianceBalanceT)) * 215;
+}
+
+function monthKeyForRow(row) {
+  const raw = row.departureDate || row.arrivalDate || "";
+  if (!raw) {
+    return "Undated";
+  }
+  return String(raw).slice(0, 7);
+}
+
+function formatMonthLabel(monthKey) {
+  if (!monthKey || monthKey === "Undated") {
+    return "Undated";
+  }
+  const [year, month] = monthKey.split("-");
+  return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getVoyageRowsForCharts() {
+  return [...getActiveRows()]
+    .filter((row) => row.type === "Voyage" && row.recordId)
+    .sort((left, right) => {
+      const leftDate = `${left.departureDate || ""}-${left.recordId}`;
+      const rightDate = `${right.departureDate || ""}-${right.recordId}`;
+      return leftDate.localeCompare(rightDate);
+    });
+}
+
+function buildMonthlyAnalytics(rows) {
+  const monthMap = new Map();
+
+  rows.forEach((row) => {
+    const key = monthKeyForRow(row);
+    if (!monthMap.has(key)) {
+      monthMap.set(key, {
+        monthKey: key,
+        monthLabel: formatMonthLabel(key),
+        rows: [],
+        eua: 0,
+        euaCost: 0,
+        penalty: 0,
+        totalCost: 0,
+      });
+    }
+
+    const bucket = monthMap.get(key);
+    bucket.rows.push(row);
+    bucket.eua += numberOrZero(row.euasRequiredT);
+    bucket.euaCost += numberOrZero(row.euasCostEur);
+    bucket.penalty += numberOrZero(row.fuelEuPenaltyEur);
+    bucket.totalCost += totalOperationalCostEur(row);
+  });
+
+  return [...monthMap.values()].sort((left, right) => left.monthKey.localeCompare(right.monthKey));
+}
+
+function renderEuaMarketStrip() {
+  const { status, snapshot, error } = stateStore.market;
+  const loading = status === "loading" || status === "idle";
+  const failed = status === "error";
+
+  return `
+    <section class="market-strip">
+      <div class="market-strip-copy">
+        <p class="eyebrow">Live EUA Market</p>
+        <h2>EU Carbon Permits</h2>
+        <p class="helper-text">Live benchmark reference from Trading Economics for dashboard context.</p>
+      </div>
+      <div class="market-strip-metrics">
+        <article class="market-card primary">
+          <span class="market-label">Current price</span>
+          <strong class="market-value">${loading ? "Loading..." : failed ? "-" : `${formatNumber(snapshot.price, 2)} EUR`}</strong>
+          <span class="market-note">${loading ? "Fetching market feed" : failed ? error || "Market feed unavailable" : snapshot.asOfDate || "Latest session"}</span>
+        </article>
+        <article class="market-card">
+          <span class="market-label">Previous day</span>
+          <strong class="market-value">${loading || failed ? "-" : `${formatNumber(snapshot.previous, 2)} EUR`}</strong>
+          <span class="market-note">${loading || failed ? "" : `${snapshot.dayChangePercent >= 0 ? "+" : ""}${formatNumber(snapshot.dayChangePercent, 2)}% day move`}</span>
+        </article>
+        <article class="market-card">
+          <span class="market-label">1 month</span>
+          <strong class="market-value ${loading || failed ? "" : snapshot.monthChangePercent <= 0 ? "tag-risk" : "tag-good"}">${loading || failed ? "-" : `${snapshot.monthChangePercent >= 0 ? "+" : ""}${formatNumber(snapshot.monthChangePercent, 2)}%`}</strong>
+          <span class="market-note">Monthly performance</span>
+        </article>
+        <article class="market-card">
+          <span class="market-label">1 year</span>
+          <strong class="market-value ${loading || failed ? "" : snapshot.yearChangePercent >= 0 ? "tag-good" : "tag-risk"}">${loading || failed ? "-" : `${snapshot.yearChangePercent >= 0 ? "+" : ""}${formatNumber(snapshot.yearChangePercent, 2)}%`}</strong>
+          <span class="market-note"><a href="${snapshot?.sourceUrl || "https://tradingeconomics.com/commodity/carbon"}" target="_blank" rel="noreferrer">Open source</a></span>
+        </article>
+      </div>
+    </section>
+  `;
 }
 
 function calculatorCellValue(row, column) {
@@ -1213,12 +1332,13 @@ function renderProjectionPanel() {
 
 function renderDashboard() {
   return `
+    ${renderEuaMarketStrip()}
     ${renderProjectionPanel()}
     <section class="dashboard-layout">
       ${renderCollapsibleSection({
         action: "toggle-charts",
         title: "Visual Analytics",
-        badges: renderSectionBadge("6 charts"),
+        badges: renderSectionBadge("10 charts"),
         note: "Collapse when you need more space",
         open: stateStore.ui.chartsOpen,
         body: `
@@ -1227,7 +1347,7 @@ function renderDashboard() {
             <div class="table-head">
               <div>
                 <p class="eyebrow">By Voyage</p>
-                <h3>EUAs Required Trend by Voyage (t CO2eq)</h3>
+                <h3>EUAs by Voyage (t CO2eq)</h3>
               </div>
             </div>
             <div class="chart-canvas-wrap"><canvas id="vesselEuaChart"></canvas></div>
@@ -1236,8 +1356,38 @@ function renderDashboard() {
           <article class="chart-card">
             <div class="table-head">
               <div>
+                <p class="eyebrow">By Month</p>
+                <h3>EUAs by Month (t CO2eq)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="monthlyEuaChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
                 <p class="eyebrow">By Voyage</p>
-                <h3>GHG Intensity Attained vs Target (g/MJ)</h3>
+                <h3>EUA Cost by Voyage (EUR)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="voyageCostChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Month</p>
+                <h3>EUA Cost by Month (EUR)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="monthlyCostChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Voyage</p>
+                <h3>Attained GHG Intensity by Voyage (g/MJ)</h3>
               </div>
             </div>
             <div class="chart-canvas-wrap"><canvas id="voyageGhgChart"></canvas></div>
@@ -1247,39 +1397,50 @@ function renderDashboard() {
             <div class="table-head">
               <div>
                 <p class="eyebrow">By Voyage</p>
-                <h3>EUAs Required by Voyage (t CO2eq)</h3>
+                <h3>Compliance Balance by Voyage (t CO2eq)</h3>
               </div>
             </div>
-            <div class="chart-canvas-wrap"><canvas id="voyageEuaChart"></canvas></div>
+            <div class="chart-canvas-wrap"><canvas id="balanceChart"></canvas></div>
           </article>
 
           <article class="chart-card">
             <div class="table-head">
               <div>
-                <p class="eyebrow">Cost Split</p>
-                <h3>EUA Cost Split — Voyage vs Port Stay</h3>
+                <p class="eyebrow">By Voyage</p>
+                <h3>FuelEU Penalty by Voyage (EUR)</h3>
               </div>
             </div>
-            <div class="chart-canvas-wrap"><canvas id="costSplitChart"></canvas></div>
-          </article>
-          <article class="chart-card">
-            <div class="table-head">
-              <div>
-                <p class="eyebrow">Projection</p>
-                <h3>EUAs Actual vs Projected by Voyage</h3>
-              </div>
-            </div>
-            <div class="chart-canvas-wrap"><canvas id="projectedEuaChart"></canvas></div>
+            <div class="chart-canvas-wrap"><canvas id="voyagePenaltyChart"></canvas></div>
           </article>
 
           <article class="chart-card">
             <div class="table-head">
               <div>
-                <p class="eyebrow">Projection</p>
-                <h3>Compliance Balance Actual vs Projected</h3>
+                <p class="eyebrow">By Month</p>
+                <h3>FuelEU Penalty by Month (EUR)</h3>
               </div>
             </div>
-            <div class="chart-canvas-wrap"><canvas id="projectedBalanceChart"></canvas></div>
+            <div class="chart-canvas-wrap"><canvas id="monthlyPenaltyChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Voyage</p>
+                <h3>Surplus Value by Voyage (USD @ 215/t)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="surplusChart"></canvas></div>
+          </article>
+
+          <article class="chart-card">
+            <div class="table-head">
+              <div>
+                <p class="eyebrow">By Voyage</p>
+                <h3>Total Cost by Voyage (EUR)</h3>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="totalCostChart"></canvas></div>
           </article>
           </div>
         `,
@@ -1291,305 +1452,320 @@ function renderDashboard() {
 
 function renderDashboardCharts() {
   destroyCharts();
-  const activeRows = getActiveRows();
-  const dashboard = computeFilteredDashboard(activeRows);
-  const voyageRows = dashboard.voyageRows.filter((row) => row.attainedGhgIntensity !== null);
-  const euaTrendRows = dashboard.voyageRows.filter((row) => row.euasRequiredT !== null);
-  const projectedRows = getProjectionRows(dashboard.voyageRows);
+  const voyageRows = getVoyageRowsForCharts();
+  const monthlyBuckets = buildMonthlyAnalytics(voyageRows);
 
-  const vesselCanvas = document.getElementById("vesselEuaChart");
-  const ghgCanvas = document.getElementById("voyageGhgChart");
-  const voyageEuaCanvas = document.getElementById("voyageEuaChart");
-  const costSplitCanvas = document.getElementById("costSplitChart");
-  const projectedEuaCanvas = document.getElementById("projectedEuaChart");
-  const projectedBalanceCanvas = document.getElementById("projectedBalanceChart");
+  const openMonthDrilldown = (title, subtitle, monthBucket) => {
+    if (!monthBucket) return;
+    openDrilldown(
+      title,
+      subtitle,
+      ["Record", "Vessel", "Route", "Date", "EUAs", "EUA Cost", "Penalty", "Total Cost"],
+      monthBucket.rows.map((row) => [
+        row.recordId,
+        row.vesselName,
+        row.route,
+        formatDateValue(row.departureDate || row.arrivalDate),
+        formatNumber(row.euasRequiredT, 2),
+        formatCurrency(row.euasCostEur),
+        formatCurrency(row.fuelEuPenaltyEur),
+        formatCurrency(totalOperationalCostEur(row)),
+      ]),
+      monthBucket.rows
+    );
+  };
 
-  if (vesselCanvas) {
-    stateStore.charts.vesselEua = new Chart(vesselCanvas, {
-      type: "line",
-      data: {
-        labels: euaTrendRows.map((row) => row.recordId),
-        datasets: [
-          {
-            label: "EUAs required",
-            data: euaTrendRows.map((row) => row.euasRequiredT),
-            borderColor: "#d78a1f",
-            backgroundColor: "rgba(215, 138, 31, 0.16)",
-            pointBackgroundColor: "#d78a1f",
-            pointBorderColor: "#d78a1f",
-            pointRadius: 4,
-            pointHoverRadius: 6,
-            borderWidth: 3,
-            tension: 0.28,
-            fill: true,
-          },
-        ],
+  const baseOptions = (onClick, showLegend = false) => ({
+    maintainAspectRatio: false,
+    responsive: true,
+    onClick,
+    plugins: {
+      legend: {
+        display: showLegend,
+        position: "bottom",
       },
-      options: {
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        onClick: (_, elementsClicked) => {
-          if (!elementsClicked.length) return;
-          const index = elementsClicked[0].index;
-          const row = euaTrendRows[index];
-          if (!row) return;
-          openDrilldown(
-            `Voyage EUA trend ${row.recordId}`,
-            row.route,
-            ["Record", "Vessel", "Type", "EUAs Required", "ETS Cost", "GHG Intensity"],
-            [[
-              row.recordId,
-              row.vesselName,
-              row.type,
-              formatNumber(row.euasRequiredT, 3),
-              formatCurrency(row.euasCostEur),
-              formatNumber(row.attainedGhgIntensity, 3),
-            ]],
-            [row]
-          );
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-          },
-        },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
       },
-    });
-  }
+    },
+  });
 
-  if (ghgCanvas) {
-    stateStore.charts.voyageGhg = new Chart(ghgCanvas, {
-      type: "line",
-      data: {
-        labels: voyageRows.map((row) => row.recordId),
-        datasets: [
-          {
-            label: "Attained",
-            data: voyageRows.map((row) => row.attainedGhgIntensity),
-            borderColor: "#4288d6",
-            backgroundColor: "#4288d6",
-            pointRadius: 4,
-            tension: 0.2,
-          },
-          {
-            label: `Target ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 2)}`,
-            data: voyageRows.map(() => stateStore.derived.parameterValues.fueleuTarget),
-            borderColor: "#cf4e3a",
-            borderDash: [6, 6],
-            pointRadius: 0,
-            tension: 0,
-          },
-        ],
-      },
-      options: {
-        maintainAspectRatio: false,
-        onClick: (_, elementsClicked) => {
-          if (!elementsClicked.length) return;
-          const index = elementsClicked[0].index;
-          const row = voyageRows[index];
-          openDrilldown(
-            `GHG Intensity for ${row.recordId}`,
-            row.route,
-            ["Record", "Vessel", "Attained", "Target", "Compliance Balance", "FuelEU Penalty"],
-            [[
-              row.recordId,
-              row.vesselName,
-              formatNumber(row.attainedGhgIntensity, 3),
-              formatNumber(row.targetGhgIntensity, 3),
-              formatNumber(row.complianceBalanceT, 3),
-              formatCurrency(row.fuelEuPenaltyEur),
-            ]],
-            [row]
-          );
-        },
-      },
-    });
-  }
+  const createChart = (key, canvasId, config) => {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    stateStore.charts[key] = new Chart(canvas, config);
+  };
 
-  if (voyageEuaCanvas) {
-    stateStore.charts.voyageEua = new Chart(voyageEuaCanvas, {
-      type: "bar",
-      data: {
-        labels: voyageRows.map((row) => row.recordId),
-        datasets: [
-          {
-            label: "EUAs required",
-            data: voyageRows.map((row) => row.euasRequiredT),
-            backgroundColor: voyageRows.map((row) => (row.scopePercent === 1 ? "#178c18" : "#78a641")),
-            borderRadius: 6,
-          },
-        ],
-      },
-      options: {
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        onClick: (_, elementsClicked) => {
-          if (!elementsClicked.length) return;
-          const index = elementsClicked[0].index;
-          const row = voyageRows[index];
-          openDrilldown(
-            `Voyage EUA Requirement ${row.recordId}`,
-            row.route,
-            ["Vessel", "Scope", "ETS CO2eq", "EUAs Required", "ETS Cost", "Fuel Consumed (MT)"],
-            [[
-              row.vesselName,
-              formatPercent(row.scopePercent),
-              formatNumber(row.etsInScopeCo2eqT, 3),
-              formatNumber(row.euasRequiredT, 3),
-              formatCurrency(row.euasCostEur),
-              formatNumber(numberOrZero(row.fuel1ConsumptionMt) + numberOrZero(row.fuel2ConsumptionMt) + numberOrZero(row.bioFuelConsumptionMt), 2),
-            ]],
-            [row]
-          );
+  createChart("voyageEua", "vesselEuaChart", {
+    type: "bar",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "EUAs required",
+          data: voyageRows.map((row) => row.euasRequiredT),
+          backgroundColor: voyageRows.map((row) => (numberOrZero(row.scopePercent) === 1 ? "#d78a1f" : "#e7b25b")),
+          borderRadius: 6,
         },
-      },
-    });
-  }
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      if (!row) return;
+      openDrilldown(
+        `EUAs for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "Route", "Scope", "EUAs", "EUA Cost", "GHG"],
+        [[
+          row.recordId,
+          row.vesselName,
+          row.route,
+          formatPercent(row.scopePercent),
+          formatNumber(row.euasRequiredT, 2),
+          formatCurrency(row.euasCostEur),
+          formatNumber(row.attainedGhgIntensity, 2),
+        ]],
+        [row]
+      );
+    }),
+  });
 
-  if (costSplitCanvas) {
-    const voyageCost = dashboard.voyageRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
-    const portStayCost = dashboard.portStayRows.reduce((sum, row) => sum + numberOrZero(row.euasCostEur), 0);
-    stateStore.charts.costSplit = new Chart(costSplitCanvas, {
-      type: "doughnut",
-      data: {
-        labels: ["Voyages", "Port stays"],
-        datasets: [
-          {
-            data: [voyageCost, portStayCost],
-            backgroundColor: ["#4288d6", "#178c18"],
-            borderWidth: 0,
-          },
-        ],
-      },
-      options: {
-        maintainAspectRatio: false,
-        plugins: { legend: { position: "bottom" } },
-        onClick: (_, elementsClicked) => {
-          if (!elementsClicked.length) return;
-          const index = elementsClicked[0].index;
-          const label = index === 0 ? "Voyages" : "Port stays";
-          const rows = index === 0 ? dashboard.voyageRows : dashboard.portStayRows;
-          openDrilldown(
-            `${label} cost split`,
-            "Rows included in the selected cost segment.",
-            ["Record", "Vessel", "Route", "Type", "EUAs Required", "ETS Cost"],
-            rows.map((row) => [
-              row.recordId,
-              row.vesselName,
-              row.route,
-              row.type,
-              formatNumber(row.euasRequiredT, 3),
-              formatCurrency(row.euasCostEur),
-            ]),
-            rows
-          );
+  createChart("monthlyEua", "monthlyEuaChart", {
+    type: "bar",
+    data: {
+      labels: monthlyBuckets.map((bucket) => bucket.monthLabel),
+      datasets: [
+        {
+          label: "Monthly EUAs",
+          data: monthlyBuckets.map((bucket) => bucket.eua),
+          backgroundColor: "#4f8edc",
+          borderRadius: 6,
         },
-      },
-    });
-  }
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const bucket = monthlyBuckets[elementsClicked[0].index];
+      openMonthDrilldown(`EUAs in ${bucket.monthLabel}`, "Voyage rows contributing to the selected monthly EUA total.", bucket);
+    }),
+  });
 
-  if (projectedEuaCanvas) {
-    stateStore.charts.projectedEua = new Chart(projectedEuaCanvas, {
-      type: "bar",
-      data: {
-        labels: projectedRows.map((row) => row.recordId),
-        datasets: [
-          {
-            label: "Actual",
-            data: projectedRows.map((row) => row.euasRequiredT),
-            backgroundColor: "#4288d6",
-            borderRadius: 6,
-          },
-          {
-            label: "Projected",
-            data: projectedRows.map((row) => row.projectedEuasRequiredT),
-            backgroundColor: "#7f77dd",
-            borderRadius: 6,
-          },
-        ],
-      },
-      options: {
-        maintainAspectRatio: false,
-        onClick: (_, elementsClicked) => {
-          if (!elementsClicked.length) return;
-          const index = elementsClicked[0].index;
-          const row = projectedRows[index];
-          openDrilldown(
-            `Actual vs projected EUAs ${row.recordId}`,
-            row.route,
-            ["Vessel", "Actual EUAs", "Projected EUAs", "Delta", "Actual Cost", "Projected Cost"],
-            [[
-              row.vesselName,
-              formatNumber(row.euasRequiredT, 3),
-              formatNumber(row.projectedEuasRequiredT, 3),
-              formatNumber(row.deltaEuasRequiredT, 3),
-              formatCurrency(row.euasCostEur),
-              formatCurrency(row.projectedEuasCostEur),
-            ]],
-            [row]
-          );
+  createChart("voyageCost", "voyageCostChart", {
+    type: "bar",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "EUA cost",
+          data: voyageRows.map((row) => row.euasCostEur),
+          backgroundColor: "#2f9b72",
+          borderRadius: 6,
         },
-      },
-    });
-  }
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      openDrilldown(
+        `EUA Cost for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "EUAs", "EUA Cost", "Penalty", "Total Cost"],
+        [[row.recordId, row.vesselName, formatNumber(row.euasRequiredT, 2), formatCurrency(row.euasCostEur), formatCurrency(row.fuelEuPenaltyEur), formatCurrency(totalOperationalCostEur(row))]],
+        [row]
+      );
+    }),
+  });
 
-  if (projectedBalanceCanvas) {
-    stateStore.charts.projectedBalance = new Chart(projectedBalanceCanvas, {
-      type: "line",
-      data: {
-        labels: projectedRows.map((row) => row.recordId),
-        datasets: [
-          {
-            label: "Actual",
-            data: projectedRows.map((row) => row.complianceBalanceT),
-            borderColor: "#2b8a3e",
-            backgroundColor: "#2b8a3e",
-            pointRadius: 4,
-            tension: 0.2,
-          },
-          {
-            label: "Projected",
-            data: projectedRows.map((row) => row.projectedComplianceBalanceT),
-            borderColor: "#7f77dd",
-            backgroundColor: "#7f77dd",
-            borderDash: [6, 6],
-            pointRadius: 3,
-            tension: 0.2,
-          },
-          {
-            label: "Zero reference",
-            data: projectedRows.map(() => 0),
-            borderColor: "rgba(24, 44, 77, 0.35)",
-            borderDash: [4, 4],
-            pointRadius: 0,
-            tension: 0,
-          },
-        ],
-      },
-      options: {
-        maintainAspectRatio: false,
-        onClick: (_, elementsClicked) => {
-          if (!elementsClicked.length) return;
-          const index = elementsClicked[0].index;
-          const row = projectedRows[index];
-          openDrilldown(
-            `Balance projection ${row.recordId}`,
-            row.route,
-            ["Vessel", "Actual Balance", "Projected Balance", "Delta", "Actual GHG", "Projected GHG"],
-            [[
-              row.vesselName,
-              formatNumber(row.complianceBalanceT, 3),
-              formatNumber(row.projectedComplianceBalanceT, 3),
-              formatNumber(row.deltaComplianceBalanceT, 3),
-              formatNumber(row.attainedGhgIntensity, 3),
-              formatNumber(row.projectedAttainedGhgIntensity, 3),
-            ]],
-            [row]
-          );
+  createChart("monthlyCost", "monthlyCostChart", {
+    type: "line",
+    data: {
+      labels: monthlyBuckets.map((bucket) => bucket.monthLabel),
+      datasets: [
+        {
+          label: "Monthly EUA cost",
+          data: monthlyBuckets.map((bucket) => bucket.euaCost),
+          borderColor: "#167f5b",
+          backgroundColor: "rgba(22, 127, 91, 0.16)",
+          pointRadius: 4,
+          borderWidth: 3,
+          tension: 0.25,
+          fill: true,
         },
-      },
-    });
-  }
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const bucket = monthlyBuckets[elementsClicked[0].index];
+      openMonthDrilldown(`EUA Cost in ${bucket.monthLabel}`, "Voyage rows contributing to the selected monthly EUA cost.", bucket);
+    }),
+  });
+
+  createChart("voyageGhg", "voyageGhgChart", {
+    type: "line",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "Attained",
+          data: voyageRows.map((row) => row.attainedGhgIntensity),
+          borderColor: "#4288d6",
+          backgroundColor: "#4288d6",
+          pointRadius: 4,
+          tension: 0.2,
+        },
+        {
+          label: `Target ${formatNumber(stateStore.derived.parameterValues.fueleuTarget, 2)}`,
+          data: voyageRows.map(() => stateStore.derived.parameterValues.fueleuTarget),
+          borderColor: "#cf4e3a",
+          borderDash: [6, 6],
+          pointRadius: 0,
+          tension: 0,
+        },
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      openDrilldown(
+        `GHG Intensity for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "Attained", "Target", "Compliance Balance", "FuelEU Penalty"],
+        [[row.recordId, row.vesselName, formatNumber(row.attainedGhgIntensity, 2), formatNumber(row.targetGhgIntensity, 2), formatNumber(row.complianceBalanceT, 2), formatCurrency(row.fuelEuPenaltyEur)]],
+        [row]
+      );
+    }, true),
+  });
+
+  createChart("balance", "balanceChart", {
+    type: "bar",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "Compliance balance",
+          data: voyageRows.map((row) => row.complianceBalanceT),
+          backgroundColor: voyageRows.map((row) => (numberOrZero(row.complianceBalanceT) >= 0 ? "#2b8a3e" : "#cf4e3a")),
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      openDrilldown(
+        `Compliance Balance for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "Balance", "Surplus Value", "Penalty", "GHG"],
+        [[row.recordId, row.vesselName, formatNumber(row.complianceBalanceT, 2), formatUsdCurrency(surplusValueUsd(row)), formatCurrency(row.fuelEuPenaltyEur), formatNumber(row.attainedGhgIntensity, 2)]],
+        [row]
+      );
+    }),
+  });
+
+  createChart("voyagePenalty", "voyagePenaltyChart", {
+    type: "bar",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "FuelEU penalty",
+          data: voyageRows.map((row) => row.fuelEuPenaltyEur),
+          backgroundColor: "#c35a4b",
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      openDrilldown(
+        `FuelEU Penalty for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "Compliance Balance", "Penalty", "Total Cost"],
+        [[row.recordId, row.vesselName, formatNumber(row.complianceBalanceT, 2), formatCurrency(row.fuelEuPenaltyEur), formatCurrency(totalOperationalCostEur(row))]],
+        [row]
+      );
+    }),
+  });
+
+  createChart("monthlyPenalty", "monthlyPenaltyChart", {
+    type: "line",
+    data: {
+      labels: monthlyBuckets.map((bucket) => bucket.monthLabel),
+      datasets: [
+        {
+          label: "Monthly FuelEU penalty",
+          data: monthlyBuckets.map((bucket) => bucket.penalty),
+          borderColor: "#af3d33",
+          backgroundColor: "rgba(175, 61, 51, 0.12)",
+          pointRadius: 4,
+          borderWidth: 3,
+          tension: 0.25,
+          fill: true,
+        },
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const bucket = monthlyBuckets[elementsClicked[0].index];
+      openMonthDrilldown(`FuelEU Penalty in ${bucket.monthLabel}`, "Voyage rows contributing to the selected monthly FuelEU penalty.", bucket);
+    }),
+  });
+
+  createChart("surplusValue", "surplusChart", {
+    type: "bar",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "Surplus value",
+          data: voyageRows.map((row) => surplusValueUsd(row)),
+          backgroundColor: "#7f77dd",
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      openDrilldown(
+        `Surplus Value for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "Compliance Balance", "Surplus Value (USD)", "Penalty"],
+        [[row.recordId, row.vesselName, formatNumber(row.complianceBalanceT, 2), formatUsdCurrency(surplusValueUsd(row)), formatCurrency(row.fuelEuPenaltyEur)]],
+        [row]
+      );
+    }),
+  });
+
+  createChart("totalCost", "totalCostChart", {
+    type: "bar",
+    data: {
+      labels: voyageRows.map((row) => row.recordId),
+      datasets: [
+        {
+          label: "Total cost",
+          data: voyageRows.map((row) => totalOperationalCostEur(row)),
+          backgroundColor: "#145c9e",
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: baseOptions((_, elementsClicked) => {
+      if (!elementsClicked.length) return;
+      const row = voyageRows[elementsClicked[0].index];
+      openDrilldown(
+        `Total Cost for ${row.recordId}`,
+        row.route,
+        ["Record", "Vessel", "EUA Cost", "FuelEU Penalty", "Total Cost"],
+        [[row.recordId, row.vesselName, formatCurrency(row.euasCostEur), formatCurrency(row.fuelEuPenaltyEur), formatCurrency(totalOperationalCostEur(row))]],
+        [row]
+      );
+    }),
+  });
 }
 
 function ensureCalculatorSelection() {
@@ -1878,6 +2054,28 @@ function render() {
   buildDataLists();
   renderContent();
   renderLibraryDrawer();
+}
+
+async function loadEuaMarketSnapshot() {
+  stateStore.market.status = "loading";
+  render();
+
+  try {
+    const response = await fetch("/api/market/eua");
+    if (!response.ok) {
+      throw new Error(`Market API returned ${response.status}`);
+    }
+
+    const payload = await response.json();
+    stateStore.market.status = "ready";
+    stateStore.market.snapshot = payload;
+    stateStore.market.error = null;
+  } catch (error) {
+    stateStore.market.status = "error";
+    stateStore.market.error = error.message;
+  }
+
+  render();
 }
 
 function csvEscape(value) {
@@ -2307,6 +2505,7 @@ async function bootstrap() {
   elements.saveEditorButton.addEventListener("click", saveEditorDialog);
 
   render();
+  loadEuaMarketSnapshot();
 }
 
 bootstrap().catch((error) => {

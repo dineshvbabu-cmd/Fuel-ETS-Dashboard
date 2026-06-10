@@ -5,6 +5,12 @@ const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 3000);
 const APP_DIR = path.join(__dirname, "compliance_dashboard");
+const EUA_MARKET_URL = "https://tradingeconomics.com/commodity/carbon";
+const MARKET_CACHE_MS = 30 * 60 * 1000;
+const marketCache = {
+  fetchedAt: 0,
+  payload: null,
+};
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -40,7 +46,75 @@ function sendFile(res, filePath) {
   });
 }
 
-const server = http.createServer((req, res) => {
+function stripHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseSignedNumber(text) {
+  return Number(String(text).replace(/[^\d.-]/g, ""));
+}
+
+async function fetchEuaMarketSnapshot() {
+  if (marketCache.payload && Date.now() - marketCache.fetchedAt < MARKET_CACHE_MS) {
+    return marketCache.payload;
+  }
+
+  const response = await fetch(EUA_MARKET_URL, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; Fuel-ETS-Dashboard/1.0; +https://railway.app)",
+      Accept: "text/html,application/xhtml+xml",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Source responded with ${response.status}`);
+  }
+
+  const html = await response.text();
+  const text = stripHtml(html);
+
+  const summaryMatch = text.match(
+    /EU Carbon Permits .*? to ([\d.]+) EUR on ([A-Za-z]+ \d{1,2}, \d{4}), .*? ([\d.-]+)% from the previous day\. Over the past month, EU Carbon Permits(?:'s)? price has .*? ([\d.-]+)%, but it is still ([\d.-]+)% .*? than a year ago/i
+  );
+  const statsMatch = text.match(/Actual Previous Highest Lowest Dates Unit Frequency ([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) ([\d]{4} - [\d]{4}) EUR Daily/i);
+
+  if (!summaryMatch && !statsMatch) {
+    throw new Error("Could not parse EUA market page");
+  }
+
+  const price = summaryMatch ? Number(summaryMatch[1]) : Number(statsMatch[1]);
+  const asOfDate = summaryMatch ? summaryMatch[2] : "Latest session";
+  const dayChangePercent = summaryMatch ? parseSignedNumber(summaryMatch[3]) : 0;
+  const monthChangePercent = summaryMatch ? parseSignedNumber(summaryMatch[4]) : 0;
+  const yearChangePercent = summaryMatch ? parseSignedNumber(summaryMatch[5]) : 0;
+  const previous = statsMatch ? Number(statsMatch[2]) : null;
+
+  const payload = {
+    commodity: "EU Carbon Permits",
+    price,
+    previous,
+    dayChangePercent,
+    monthChangePercent,
+    yearChangePercent,
+    asOfDate,
+    sourceUrl: EUA_MARKET_URL,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  marketCache.payload = payload;
+  marketCache.fetchedAt = Date.now();
+  return payload;
+}
+
+const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "GET" && parsed.pathname === "/api/health") {
@@ -49,6 +123,20 @@ const server = http.createServer((req, res) => {
       service: "eu-ets-fueleu-compliance-dashboard",
       status: "healthy",
     });
+    return;
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/market/eua") {
+    try {
+      const payload = await fetchEuaMarketSnapshot();
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 502, {
+        ok: false,
+        message: error.message,
+        sourceUrl: EUA_MARKET_URL,
+      });
+    }
     return;
   }
 
