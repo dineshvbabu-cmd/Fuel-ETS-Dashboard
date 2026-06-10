@@ -27,6 +27,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   font-family: var(--font-body);
   font-size: 13px;
   color: var(--text);
@@ -63,9 +64,11 @@ body {
 .page-shell {
   position: relative;
   width: min(1600px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
   margin: 10px auto 18px;
   display: grid;
   gap: 10px;
+  overflow-x: clip;
 }
 
 .topbar,
@@ -357,11 +360,13 @@ h4 {
 .content-view {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .compact-section {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .section-bar {
@@ -764,6 +769,7 @@ h4 {
   border-radius: 8px;
   overflow: auto;
   background: rgba(255, 255, 255, 0.88);
+  max-width: 100%;
 }
 
 table {
@@ -802,6 +808,8 @@ tbody tr:hover {
 .calculator-shell {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .calculator-toolbar {
@@ -911,6 +919,7 @@ tbody tr:hover {
   border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
+  max-width: 100%;
 }
 
 .calculator-table {
@@ -1010,6 +1019,8 @@ tbody tr:hover {
 
 .compact-table-card {
   padding: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .dense-table-wrap {

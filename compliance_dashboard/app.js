@@ -80,7 +80,7 @@ const stateStore = {
 
 const numericColumns = {
   fuelReference: new Set(["lcvMjPerG", "wtWPerMj", "rwd", "etsCo2Cf", "cfCo2PerG", "cfCh4PerG", "cfN2oPerG", "cslipPercent"]),
-  fleet: new Set(["imoNo", "gt", "nt", "summerDwt", "built"]),
+  fleet: new Set(["imoNo", "gt", "nt", "summerDwt", "built", "wapsFwindFactor"]),
   derogations: new Set(["serialNo"]),
 };
 
@@ -128,7 +128,6 @@ const CALCULATOR_COLUMNS = [
   { key: "targetGhgIntensity", label: "Target GHG Intensity", kind: "calculated-number", width: 130, digits: 3 },
   { key: "complianceBalanceT", label: "Compliance Balance (t)", kind: "calculated-number", width: 140, digits: 3 },
   { key: "fuelEuPenaltyEur", label: "FuelEU Penalty (EUR)", kind: "calculated-currency", width: 135 },
-  { key: "eeoi", label: "EEOI", kind: "calculated-number", width: 100, digits: 3 },
   { key: "rowActions", label: "Actions", kind: "actions", width: 100 },
 ];
 
@@ -138,21 +137,21 @@ const DETAIL_TABLE_COLUMNS = [
   { key: "vesselName", label: "Vessel", width: 108 },
   { key: "fromPortName", label: "From", width: 138 },
   { key: "toPortName", label: "To", width: 138 },
-  { key: "departureDate", label: "Date", width: 96, format: "date" },
+  { key: "departureDate", label: "Departure", width: 104, format: "date" },
+  { key: "arrivalDate", label: "Arrival", width: 104, format: "date" },
   { key: "fuel1Type", label: "Fuel 1", width: 92 },
   { key: "fuel1ConsumptionMt", label: "F1 MT", width: 82, format: "number", digits: 2 },
   { key: "fuel2Type", label: "Fuel 2", width: 92 },
   { key: "fuel2ConsumptionMt", label: "F2 MT", width: 82, format: "number", digits: 2 },
+  { key: "bioFuelType", label: "Biofuel Type", width: 118 },
+  { key: "bioFuelConsumptionMt", label: "Biofuel Qty", width: 98, format: "number", digits: 2 },
+  { key: "opsElectricityMj", label: "OPS Electricity", width: 112, format: "number", digits: 0 },
   { key: "scopePercent", label: "Scope", width: 76, format: "scope" },
   { key: "euasRequiredT", label: "EUAs (t)", width: 90, format: "number", digits: 2 },
-  { key: "projectedEuasRequiredT", label: "Proj EUAs", width: 96, format: "projection-number", digits: 2, projectionKey: "deltaEuasRequiredT", proj: true },
   { key: "euasCostEur", label: "EUA Cost", width: 106, format: "currency" },
   { key: "attainedGhgIntensity", label: "GHG", width: 84, format: "ghg", digits: 2 },
-  { key: "projectedAttainedGhgIntensity", label: "Proj GHG", width: 96, format: "projection-ghg", digits: 2, projectionKey: "deltaAttainedGhgIntensity", proj: true },
   { key: "complianceBalanceT", label: "Balance t", width: 96, format: "balance", digits: 2 },
-  { key: "projectedComplianceBalanceT", label: "Proj Bal", width: 96, format: "projection-balance", digits: 2, projectionKey: "deltaComplianceBalanceT", proj: true },
   { key: "fuelEuPenaltyEur", label: "Penalty", width: 94, format: "currency" },
-  { key: "scopeNote", label: "Scope note", width: 240, format: "note" },
 ];
 
 function formatNumber(value, digits = 2) {
@@ -1346,7 +1345,6 @@ function renderProjectionPanel() {
 function renderDashboard() {
   return `
     ${renderEuaMarketStrip()}
-    ${renderProjectionPanel()}
     <section class="dashboard-layout">
       ${renderCollapsibleSection({
         action: "toggle-charts",
@@ -1639,17 +1637,37 @@ function renderDashboardCharts() {
         },
       ],
     },
-    options: baseOptions((_, elementsClicked) => {
-      if (!elementsClicked.length) return;
-      const row = voyageRows[elementsClicked[0].index];
-      openDrilldown(
-        `GHG Intensity for ${row.recordId}`,
-        row.route,
-        ["Record", "Vessel", "Attained", "Target", "Compliance Balance", "FuelEU Penalty"],
-        [[row.recordId, row.vesselName, formatNumber(row.attainedGhgIntensity, 2), formatNumber(row.targetGhgIntensity, 2), formatNumber(row.complianceBalanceT, 2), formatCurrency(row.fuelEuPenaltyEur)]],
-        [row]
-      );
-    }, true),
+    options: {
+      ...baseOptions((_, elementsClicked) => {
+        if (!elementsClicked.length) return;
+        const row = voyageRows[elementsClicked[0].index];
+        openDrilldown(
+          `GHG Intensity for ${row.recordId}`,
+          row.route,
+          ["Record", "Vessel", "Attained", "Target", "Compliance Balance", "FuelEU Penalty"],
+          [[row.recordId, row.vesselName, formatNumber(row.attainedGhgIntensity, 2), formatNumber(row.targetGhgIntensity, 2), formatNumber(row.complianceBalanceT, 2), formatCurrency(row.fuelEuPenaltyEur)]],
+          [row]
+        );
+      }, true),
+      scales: {
+        y: (() => {
+          const values = voyageRows
+            .flatMap((row) => [numberOrZero(row.attainedGhgIntensity), numberOrZero(row.targetGhgIntensity)])
+            .filter((value) => Number.isFinite(value) && value > 0);
+          if (!values.length) {
+            return { beginAtZero: true };
+          }
+          const minValue = Math.min(...values);
+          const maxValue = Math.max(...values);
+          const padding = Math.max(0.2, (maxValue - minValue) * 0.25 || 0.4);
+          return {
+            beginAtZero: false,
+            min: Math.max(0, minValue - padding),
+            max: maxValue + padding,
+          };
+        })(),
+      },
+    },
   });
 
   createChart("balance", "balanceChart", {
@@ -2185,6 +2203,25 @@ function setCalculatorRowValue(row, field, rawValue) {
     "opsElectricityMj",
   ]);
   row[field] = numericKeys.has(field) ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
+
+  if (field === "recordId") {
+    row.recordId = String(row.recordId || "").toUpperCase();
+  }
+
+  if (field === "imoNo" && (row.windFactor === null || row.windFactor === undefined || row.windFactor === "")) {
+    const vessel = stateStore.state.fleet.find((item) => String(item.imoNo) === String(Math.trunc(Number(row.imoNo) || 0)));
+    if (vessel?.wapsFwindFactor !== null && vessel?.wapsFwindFactor !== undefined && vessel?.wapsFwindFactor !== "") {
+      row.windFactor = Number(vessel.wapsFwindFactor);
+    }
+  }
+
+  if (field === "type" && (row.type === "Voyage" || row.type === "Port Stay")) {
+    const prefix = row.type === "Port Stay" ? "P" : "V";
+    const currentRecordId = String(row.recordId || "").toUpperCase();
+    if (!currentRecordId || !currentRecordId.startsWith(prefix)) {
+      row.recordId = nextRecordSerial(row.type);
+    }
+  }
 }
 
 function updateCalculatorCell(rowId, field, rawValue, commit = true) {
@@ -2360,6 +2397,10 @@ function handleMainClick(event) {
   }
 
   if (action === "select-calculator-row") {
+    if (event.target.closest("input, select, textarea, option")) {
+      stateStore.ui.calculatorSelectedId = rowId;
+      return;
+    }
     stateStore.ui.calculatorSelectedId = rowId;
     render();
     return;

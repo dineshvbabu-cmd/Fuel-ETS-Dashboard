@@ -31,7 +31,7 @@ export const SHEET_COLUMNS = {
     "cslipPercent",
     "consumerSource",
   ],
-  fleet: ["imoNo", "vesselName", "shipType", "flag", "className", "gt", "nt", "summerDwt", "built"],
+  fleet: ["imoNo", "vesselName", "shipType", "flag", "className", "gt", "nt", "summerDwt", "built", "wapsFwindFactor"],
   ports: ["unlocode", "portName", "country", "countryCode", "euEeaInScope", "outermostRegion", "specialCategory"],
   flags: ["flagState", "iso", "registryType", "euEeaFlag", "notes"],
   derogations: ["serialNo", "euMemberState", "outermostRegion", "omrPortName", "unlocode"],
@@ -171,6 +171,7 @@ function normalizeFleetRow(row, index) {
     nt: numberOrZero(row["NT (NRT)"]),
     summerDwt: numberOrZero(row["Summer DWT"]),
     built: row.Built,
+    wapsFwindFactor: maybeNumber(row["WAPS Fwind factor"]) ?? maybeNumber(row.wapsFwindFactor),
   };
 }
 
@@ -228,6 +229,8 @@ function normalizeFormulaRow(row, index) {
 function normalizeCalculatorRow(row, index) {
   return {
     id: `calc-${index + 1}`,
+    recordId: normalizeUpper(row.recordId),
+    type: normalizeText(row.type),
     imoNo: maybeNumber(row.imoNo),
     departureDate: dateToInputValue(row.departureDate),
     fromPortCode: normalizeUpper(row.fromPortCode),
@@ -420,7 +423,11 @@ function calculateCalculatorRows(state, params, referenceMaps) {
     const fuel1Mt = numberOrZero(row.fuel1ConsumptionMt);
     const fuel2Mt = numberOrZero(row.fuel2ConsumptionMt);
     const bioMt = numberOrZero(row.bioFuelConsumptionMt);
-    const windFactor = row.windFactor === null ? 1 : numberOrZero(row.windFactor) || 1;
+    const vesselWindFactor = vessel?.wapsFwindFactor === null || vessel?.wapsFwindFactor === undefined ? null : maybeNumber(vessel.wapsFwindFactor);
+    const windFactor =
+      row.windFactor === null || row.windFactor === undefined || row.windFactor === ""
+        ? (vesselWindFactor ?? 1)
+        : numberOrZero(row.windFactor) || vesselWindFactor || 1;
 
     const fuel1EnergyMj = fuel1Mt * 1_000_000 * numberOrZero(fuel1?.lcvMjPerG);
     const fuel2EnergyMj = fuel2Mt * 1_000_000 * numberOrZero(fuel2?.lcvMjPerG);
@@ -723,7 +730,7 @@ export function blankCalculatorRow() {
     bioFuelType: "(none)",
     bioFuelConsumptionMt: null,
     sustainabilityFactor: null,
-    windFactor: 1,
+    windFactor: null,
     distanceNm: null,
     cargoTonnes: null,
     timeAtSeaHours: null,
