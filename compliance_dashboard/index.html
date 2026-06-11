@@ -28,6 +28,8 @@
         </label>
 
         <div class="topbar-icon-group">
+          <span id="syncStatus" class="sync-status" title="Storage status">Local</span>
+          <button id="generateReportButton" class="report-button" type="button" title="Generate vessel compliance statement">Report</button>
           <button id="libraryToggleButton" class="icon-button button-violet" type="button" title="Open calculation library">☰</button>
           <button id="exportFilteredButton" class="icon-button button-green" type="button" title="Export selected vessel data">⤓</button>
           <button id="resetWorkbookButton" class="icon-button button-red" type="button" title="Reset all scenario data">↺</button>
@@ -64,6 +66,43 @@
       <div id="editorDialogBody" class="editor-dialog-body"></div>
       <div class="editor-dialog-actions">
         <button id="saveEditorButton" class="primary-button" type="button">Save row</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="reportDialog" class="report-dialog">
+    <form method="dialog" class="report-dialog-shell">
+      <div class="editor-dialog-head">
+        <div>
+          <p class="eyebrow">Compliance Reporting</p>
+          <h3>Generate Vessel Statement</h3>
+        </div>
+        <button id="closeReportButton" class="icon-button compact" type="button">✕</button>
+      </div>
+      <div class="report-settings">
+        <label class="toolbar-field report-vessel-field">
+          <span>Vessel</span>
+          <select id="reportVesselSelect" class="toolbar-select"></select>
+        </label>
+        <fieldset class="report-basis">
+          <legend>Report basis</legend>
+          <label><input type="radio" name="reportBasis" value="vessel" checked> All vessel records</label>
+          <label><input type="radio" name="reportBasis" value="selected"> Selected voyages / port stays</label>
+        </fieldset>
+      </div>
+      <div class="report-row-head">
+        <div>
+          <strong>Records included</strong>
+          <p id="reportSelectionSummary" class="helper-text"></p>
+        </div>
+        <div class="report-row-actions">
+          <button id="selectAllReportRowsButton" class="inline-button compact-button" type="button">Select all</button>
+          <button id="clearReportRowsButton" class="inline-button compact-button" type="button">Clear</button>
+        </div>
+      </div>
+      <div id="reportRowList" class="report-row-list"></div>
+      <div class="editor-dialog-actions">
+        <button id="generateReportConfirmButton" class="primary-button" type="button">Generate PDF</button>
       </div>
     </form>
   </dialog>

@@ -15,7 +15,8 @@ import {
 const PAGE_SIZE = 18;
 const CALCULATOR_HISTORY_PAGE_SIZE = 20;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
-const APP_BUILD = "2026.06.11.2";
+const REMOTE_SAVE_DELAY_MS = 700;
+const APP_BUILD = "2026.06.11.3";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -28,6 +29,8 @@ const PROJECTION_BASELINE = {
 const elements = {
   viewTabs: document.getElementById("viewTabs"),
   vesselFilter: document.getElementById("vesselFilter"),
+  syncStatus: document.getElementById("syncStatus"),
+  generateReportButton: document.getElementById("generateReportButton"),
   libraryToggleButton: document.getElementById("libraryToggleButton"),
   exportFilteredButton: document.getElementById("exportFilteredButton"),
   resetWorkbookButton: document.getElementById("resetWorkbookButton"),
@@ -46,6 +49,14 @@ const elements = {
   portCodes: document.getElementById("portCodes"),
   fuelTypes: document.getElementById("fuelTypes"),
   imoNumbers: document.getElementById("imoNumbers"),
+  reportDialog: document.getElementById("reportDialog"),
+  closeReportButton: document.getElementById("closeReportButton"),
+  reportVesselSelect: document.getElementById("reportVesselSelect"),
+  reportSelectionSummary: document.getElementById("reportSelectionSummary"),
+  reportRowList: document.getElementById("reportRowList"),
+  selectAllReportRowsButton: document.getElementById("selectAllReportRowsButton"),
+  clearReportRowsButton: document.getElementById("clearReportRowsButton"),
+  generateReportConfirmButton: document.getElementById("generateReportConfirmButton"),
 };
 
 const stateStore = {
@@ -56,6 +67,17 @@ const stateStore = {
   market: {
     status: "idle",
     snapshot: null,
+    error: null,
+  },
+  sync: {
+    ready: false,
+    status: "loading",
+    storage: null,
+    revision: "",
+    updatedAt: "",
+    timer: null,
+    inFlight: false,
+    queued: false,
     error: null,
   },
   ui: {
@@ -306,8 +328,117 @@ function lower(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function getSyncClientId() {
+  const key = `${STORAGE_KEY}-client-id`;
+  let clientId = localStorage.getItem(key);
+  if (!clientId) {
+    clientId = globalThis.crypto?.randomUUID?.() || `browser-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, clientId);
+  }
+  return clientId;
+}
+
+function renderSyncStatus() {
+  if (!elements.syncStatus) return;
+  const { status, storage, updatedAt, error } = stateStore.sync;
+  const durable = Boolean(storage?.durable);
+  const labels = {
+    loading: "Checking storage",
+    pending: "Pending save",
+    saving: "Saving...",
+    saved: durable ? "Saved to R2" : "Server fallback",
+    error: "Local only",
+  };
+  elements.syncStatus.textContent = labels[status] || "Local";
+  elements.syncStatus.className = `sync-status sync-${status} ${durable ? "sync-durable" : ""}`;
+  elements.syncStatus.title =
+    status === "error"
+      ? `Browser copy is safe. Server sync failed: ${error || "Unknown error"}`
+      : durable
+        ? `Durable R2 storage${updatedAt ? ` - last saved ${new Date(updatedAt).toLocaleString()}` : ""}`
+        : "Browser autosave is active. Configure R2 variables in Railway for durable cross-device storage.";
+}
+
+function scheduleRemoteSave(delay = REMOTE_SAVE_DELAY_MS) {
+  if (!stateStore.sync.ready) return;
+  window.clearTimeout(stateStore.sync.timer);
+  stateStore.sync.status = "pending";
+  renderSyncStatus();
+  stateStore.sync.timer = window.setTimeout(syncStateToServer, delay);
+}
+
+async function syncStateToServer() {
+  if (!stateStore.sync.ready) return;
+  if (stateStore.sync.inFlight) {
+    stateStore.sync.queued = true;
+    return;
+  }
+
+  stateStore.sync.inFlight = true;
+  stateStore.sync.queued = false;
+  stateStore.sync.status = "saving";
+  renderSyncStatus();
+  try {
+    const response = await fetch("/api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: getSyncClientId(),
+        state: persistableState(stateStore.state),
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || `Storage responded with ${response.status}`);
+    }
+    stateStore.sync.storage = payload.storage;
+    stateStore.sync.revision = payload.revision || "";
+    stateStore.sync.updatedAt = payload.updatedAt || "";
+    stateStore.sync.status = "saved";
+    stateStore.sync.error = null;
+  } catch (error) {
+    stateStore.sync.status = "error";
+    stateStore.sync.error = error.message;
+  } finally {
+    stateStore.sync.inFlight = false;
+    renderSyncStatus();
+    if (stateStore.sync.queued) {
+      scheduleRemoteSave(100);
+    }
+  }
+}
+
+async function hydrateFromServer(localState) {
+  try {
+    const response = await fetch("/api/state", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || `Storage responded with ${response.status}`);
+    }
+    stateStore.sync.storage = payload.storage;
+    stateStore.sync.ready = true;
+    if (payload.exists && payload.document?.state && Array.isArray(payload.document.state.calculatorRows)) {
+      stateStore.sync.revision = payload.document.revision || "";
+      stateStore.sync.updatedAt = payload.document.updatedAt || "";
+      stateStore.sync.status = "saved";
+      return payload.document.state;
+    }
+    stateStore.sync.status = "pending";
+    window.setTimeout(() => scheduleRemoteSave(100), 0);
+    return localState;
+  } catch (error) {
+    stateStore.sync.ready = true;
+    stateStore.sync.status = "error";
+    stateStore.sync.error = error.message;
+    return localState;
+  } finally {
+    renderSyncStatus();
+  }
+}
+
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
+  scheduleRemoteSave();
 }
 
 function getCurrentReportYear() {
@@ -2667,6 +2798,7 @@ function renderLibraryDrawer() {
 function render() {
   renderViewTabs();
   renderVesselFilter();
+  renderSyncStatus();
   if (stateStore.ui.activeView === "dashboard") {
     elements.kpiGrid.classList.remove("hidden");
     renderKpis();
@@ -2722,6 +2854,10 @@ function showToast(message, tone = "success") {
 
 function downloadText(filename, content, type = "text/plain") {
   const blob = new Blob([content], { type });
+  downloadBlob(filename, blob);
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2737,6 +2873,136 @@ function downloadText(filename, content, type = "text/plain") {
       link.remove();
     }, 4000);
   });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function getReportRowsForImo(imoNo) {
+  return stateStore.derived.calculatorRows.filter((row) => {
+    const sourceRow = getCalculatorStateRow(row.id);
+    return String(row.imoNo || "") === String(imoNo || "") && rowHasMeaningfulInputs(sourceRow);
+  });
+}
+
+function getReportBasis() {
+  return elements.reportDialog.querySelector('input[name="reportBasis"]:checked')?.value || "vessel";
+}
+
+function updateReportSelectionSummary() {
+  const basis = getReportBasis();
+  const checkboxes = [...elements.reportRowList.querySelectorAll('input[type="checkbox"]')];
+  const selected = basis === "vessel" ? checkboxes.length : checkboxes.filter((item) => item.checked).length;
+  checkboxes.forEach((item) => {
+    item.disabled = basis === "vessel";
+    if (basis === "vessel") item.checked = true;
+  });
+  elements.reportSelectionSummary.textContent = `${selected} of ${checkboxes.length} records will be included.`;
+}
+
+function renderReportRows() {
+  const imoNo = elements.reportVesselSelect.value;
+  const rows = getReportRowsForImo(imoNo);
+  elements.reportRowList.innerHTML =
+    rows
+      .map(
+        (row) => `
+          <label class="report-row-option">
+            <input type="checkbox" value="${escapeHtml(row.id)}" checked>
+            <span class="report-row-id">${escapeHtml(row.recordId)}</span>
+            <span>${escapeHtml(row.type)}</span>
+            <span>${escapeHtml(formatDateValue(row.departureDate))}</span>
+            <span class="report-row-route">${escapeHtml(row.route)}</span>
+            <span>${formatNumber(row.euasRequiredT, 2)} EUAs</span>
+          </label>
+        `
+      )
+      .join("") || `<div class="empty-state compact-empty-state">No voyage or port-stay records are available for this vessel.</div>`;
+  updateReportSelectionSummary();
+}
+
+function openReportDialog() {
+  const vesselRows = stateStore.state.fleet
+    .map((vessel) => ({ vessel, count: getReportRowsForImo(vessel.imoNo).length }))
+    .filter((item) => item.count > 0);
+  if (!vesselRows.length) {
+    showToast("Add at least one voyage input before generating a report.", "info");
+    return;
+  }
+
+  elements.reportVesselSelect.innerHTML = vesselRows
+    .map(
+      ({ vessel, count }) =>
+        `<option value="${escapeHtml(vessel.imoNo)}">${escapeHtml(vessel.vesselName)} - IMO ${escapeHtml(vessel.imoNo)} (${count})</option>`
+    )
+    .join("");
+  const filteredVessel = vesselRows.find((item) => item.vessel.vesselName === stateStore.ui.vesselFilter);
+  if (filteredVessel) {
+    elements.reportVesselSelect.value = String(filteredVessel.vessel.imoNo);
+  }
+  elements.reportDialog.querySelector('input[name="reportBasis"][value="vessel"]').checked = true;
+  renderReportRows();
+  elements.reportDialog.showModal();
+}
+
+async function generateComplianceReport() {
+  const imoNo = elements.reportVesselSelect.value;
+  const vessel = stateStore.state.fleet.find((item) => String(item.imoNo) === String(imoNo));
+  if (!vessel) {
+    showToast("Select a vessel before generating the report.", "info");
+    return;
+  }
+
+  const allRows = getReportRowsForImo(imoNo);
+  const basis = getReportBasis();
+  const selectedIds = new Set(
+    [...elements.reportRowList.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value)
+  );
+  const rows = basis === "vessel" ? allRows : allRows.filter((row) => selectedIds.has(row.id));
+  if (!rows.length) {
+    showToast("Select at least one voyage or port stay.", "info");
+    return;
+  }
+
+  elements.generateReportConfirmButton.disabled = true;
+  elements.generateReportConfirmButton.textContent = "Generating...";
+  try {
+    const response = await fetch("/api/reports/compliance-statement", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vessel,
+        rows,
+        reportYear: stateStore.derived.parameterValues.reportYear,
+        euaPrice: stateStore.derived.parameterValues.euaPrice,
+        issuedAt: new Date().toISOString(),
+        selectionLabel:
+          basis === "vessel"
+            ? `All ${rows.length} records for ${vessel.vesselName}`
+            : `${rows.length} selected records: ${rows.map((row) => row.recordId).join(", ")}`,
+      }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || `Report service responded with ${response.status}`);
+    }
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename="([^"]+)"/i)?.[1] || `Statement_${vessel.vesselName}_${stateStore.derived.parameterValues.reportYear}.pdf`;
+    downloadBlob(filename, await response.blob());
+    elements.reportDialog.close();
+    showToast(`Report generated: ${filename}`, "success");
+  } catch (error) {
+    showToast(`Report could not be generated: ${error.message}`, "info");
+  } finally {
+    elements.generateReportConfirmButton.disabled = false;
+    elements.generateReportConfirmButton.textContent = "Generate PDF";
+  }
 }
 
 function wireScrollGroup(selector, stateKey) {
@@ -3334,7 +3600,8 @@ async function bootstrap() {
   const response = await fetch("/data/workbook-seed.json");
   const seed = await response.json();
   stateStore.seedState = createStateFromSeed(seed);
-  stateStore.state = hydrateFromStorage(stateStore.seedState);
+  const localState = hydrateFromStorage(stateStore.seedState);
+  stateStore.state = await hydrateFromServer(localState);
   compactCalculatorRowsForRuntime();
   stateStore.derived = recalculateWorkbook(stateStore.state);
   if (syncCalculatorDraftRowsWithDerived()) {
@@ -3375,6 +3642,28 @@ async function bootstrap() {
   elements.libraryContent.addEventListener("click", handleLibraryClick);
   elements.libraryContent.addEventListener("input", handleLibraryInput);
   elements.exportFilteredButton.addEventListener("click", exportFilteredData);
+  elements.generateReportButton.addEventListener("click", openReportDialog);
+  elements.closeReportButton.addEventListener("click", () => elements.reportDialog.close());
+  elements.reportVesselSelect.addEventListener("change", renderReportRows);
+  elements.reportDialog.addEventListener("change", (event) => {
+    if (event.target.name === "reportBasis" || event.target.matches('.report-row-option input[type="checkbox"]')) {
+      updateReportSelectionSummary();
+    }
+  });
+  elements.selectAllReportRowsButton.addEventListener("click", () => {
+    elements.reportRowList.querySelectorAll('input[type="checkbox"]').forEach((item) => {
+      item.checked = true;
+    });
+    updateReportSelectionSummary();
+  });
+  elements.clearReportRowsButton.addEventListener("click", () => {
+    elements.reportDialog.querySelector('input[name="reportBasis"][value="selected"]').checked = true;
+    elements.reportRowList.querySelectorAll('input[type="checkbox"]').forEach((item) => {
+      item.checked = false;
+    });
+    updateReportSelectionSummary();
+  });
+  elements.generateReportConfirmButton.addEventListener("click", generateComplianceReport);
   if (elements.resetWorkbookButton) {
     elements.resetWorkbookButton.addEventListener("click", () => {
       stateStore.state = deepClone(stateStore.seedState);
@@ -3399,6 +3688,7 @@ async function bootstrap() {
     importVoyageRows: importVoyageRowsFromExternal,
     exportState: () => deepClone(stateStore.state),
     getBlankVoyageTemplate: () => deepClone(blankCalculatorRow()),
+    syncNow: syncStateToServer,
   };
 
   render();

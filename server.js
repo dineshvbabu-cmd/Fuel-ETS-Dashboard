@@ -1,7 +1,10 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { URL } = require("url");
+const { getStorageStatus, loadStateDocument, saveStateDocument } = require("./storage");
+const { createComplianceStatement } = require("./report");
 
 const PORT = Number(process.env.PORT || 3000);
 const APP_DIR = path.join(__dirname, "compliance_dashboard");
@@ -29,6 +32,60 @@ function sendJson(res, statusCode, body) {
     "Content-Length": Buffer.byteLength(payload),
   });
   res.end(payload);
+}
+
+function sendBuffer(res, statusCode, body, headers = {}) {
+  res.writeHead(statusCode, {
+    "Content-Length": body.length,
+    ...headers,
+  });
+  res.end(body);
+}
+
+function readJsonBody(req, maxBytes = 12 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(Object.assign(new Error("Request body is too large"), { statusCode: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        reject(Object.assign(new Error("Invalid JSON request body"), { statusCode: 400 }));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function secureEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isAuthorized(req) {
+  if (!process.env.APP_USERNAME || !process.env.APP_PASSWORD) return true;
+  const authorization = String(req.headers.authorization || "");
+  if (!authorization.startsWith("Basic ")) return false;
+  try {
+    const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (separator === -1) return false;
+    const username = decoded.slice(0, separator);
+    const password = decoded.slice(separator + 1);
+    return secureEqual(username, process.env.APP_USERNAME) && secureEqual(password, process.env.APP_PASSWORD);
+  } catch {
+    return false;
+  }
 }
 
 function sendFile(res, filePath) {
@@ -122,7 +179,88 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       service: "eu-ets-fueleu-compliance-dashboard",
       status: "healthy",
+      storage: getStorageStatus(),
     });
+    return;
+  }
+
+  if (!isAuthorized(req)) {
+    res.writeHead(401, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": 'Basic realm="Fuel ETS Dashboard", charset="UTF-8"',
+    });
+    res.end("Authentication required");
+    return;
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/storage/status") {
+    sendJson(res, 200, getStorageStatus());
+    return;
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/state") {
+    try {
+      const document = await loadStateDocument();
+      sendJson(res, 200, {
+        exists: Boolean(document),
+        storage: getStorageStatus(),
+        document,
+      });
+    } catch (error) {
+      sendJson(res, 503, {
+        ok: false,
+        message: error.message,
+        storage: getStorageStatus(),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "PUT" && parsed.pathname === "/api/state") {
+    try {
+      const payload = await readJsonBody(req);
+      if (!payload.state || !Array.isArray(payload.state.calculatorRows)) {
+        sendJson(res, 400, { ok: false, message: "A valid dashboard state is required." });
+        return;
+      }
+      const document = await saveStateDocument(payload.state, payload.clientId);
+      sendJson(res, 200, {
+        ok: true,
+        storage: getStorageStatus(),
+        revision: document.revision,
+        updatedAt: document.updatedAt,
+      });
+    } catch (error) {
+      sendJson(res, error.statusCode || 503, {
+        ok: false,
+        message: error.message,
+        storage: getStorageStatus(),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/reports/compliance-statement") {
+    try {
+      const payload = await readJsonBody(req, 4 * 1024 * 1024);
+      if (!payload.vessel || !Array.isArray(payload.rows)) {
+        sendJson(res, 400, { ok: false, message: "Vessel details and selected rows are required." });
+        return;
+      }
+      const pdf = await createComplianceStatement(payload);
+      const vesselSlug = String(payload.vessel.vesselName || "vessel").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+      const year = Number(payload.reportYear) || new Date().getFullYear();
+      sendBuffer(res, 200, pdf, {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="Statement_${vesselSlug || "Vessel"}_${year}.pdf"`,
+        "Cache-Control": "no-store",
+      });
+    } catch (error) {
+      sendJson(res, error.statusCode || 500, {
+        ok: false,
+        message: error.message,
+      });
+    }
     return;
   }
 

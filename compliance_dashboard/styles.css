@@ -81,7 +81,8 @@ body {
 .calculator-output-card,
 .drilldown-pane,
 .library-drawer,
-.editor-dialog-shell {
+.editor-dialog-shell,
+.report-dialog-shell {
   background: var(--panel-soft);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -163,6 +164,7 @@ h4 {
 .view-tab,
 .sheet-tab,
 .icon-button,
+.report-button,
 .inline-button,
 .primary-button,
 .danger-button {
@@ -222,6 +224,47 @@ h4 {
 .icon-button.compact {
   min-width: 40px;
   min-height: 40px;
+}
+
+.report-button {
+  min-height: 40px;
+  padding: 0 13px;
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, #16829a 0%, #07556b 100%);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.sync-status {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(83, 108, 122, 0.2);
+  background: rgba(83, 108, 122, 0.08);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sync-status.sync-saving,
+.sync-status.sync-pending {
+  color: #9b620e;
+  background: rgba(215, 138, 31, 0.12);
+}
+
+.sync-status.sync-saved.sync-durable {
+  color: #147c46;
+  background: rgba(40, 160, 99, 0.12);
+  border-color: rgba(40, 160, 99, 0.22);
+}
+
+.sync-status.sync-error {
+  color: #a93030;
+  background: rgba(207, 83, 83, 0.12);
 }
 
 .primary-button,
@@ -1447,21 +1490,125 @@ tbody tr:hover {
   color: var(--muted);
 }
 
-.editor-dialog {
+.editor-dialog,
+.report-dialog {
   width: min(760px, calc(100vw - 24px));
   border: none;
   padding: 0;
   background: transparent;
 }
 
-.editor-dialog::backdrop {
+.editor-dialog::backdrop,
+.report-dialog::backdrop {
   background: rgba(24, 44, 77, 0.32);
   backdrop-filter: blur(6px);
 }
 
-.editor-dialog-shell {
+.editor-dialog-shell,
+.report-dialog-shell {
   border-radius: 24px;
   padding: 18px;
+}
+
+.report-dialog {
+  width: min(900px, calc(100vw - 24px));
+}
+
+.report-dialog-shell {
+  max-height: min(760px, calc(100vh - 30px));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(160px, 1fr) auto;
+  gap: 14px;
+}
+
+.report-settings {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.2fr);
+  gap: 14px;
+  align-items: end;
+}
+
+.report-vessel-field {
+  min-width: 0;
+}
+
+.report-basis {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 62px;
+  margin: 0;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.report-basis legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.report-basis label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
+.report-row-head,
+.report-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report-row-head .helper-text {
+  margin: 3px 0 0;
+  font-size: 0.75rem;
+}
+
+.report-row-list {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.report-row-option {
+  display: grid;
+  grid-template-columns: 22px 58px 70px 88px minmax(180px, 1fr) 90px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.75rem;
+}
+
+.report-row-option:last-child {
+  border-bottom: none;
+}
+
+.report-row-option:hover {
+  background: rgba(66, 136, 214, 0.06);
+}
+
+.report-row-id {
+  font-weight: 700;
+  color: var(--primary-strong);
+}
+
+.report-row-route {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-empty-state {
+  min-height: 160px;
 }
 
 .editor-textarea {
@@ -1551,6 +1698,31 @@ button:hover {
 
   .topbar-icon-group {
     justify-content: flex-start;
+  }
+
+  .report-settings {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .sync-status {
+    display: none;
+  }
+
+  .report-basis {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .report-row-option {
+    grid-template-columns: 22px 58px 1fr;
+  }
+
+  .report-row-option span:nth-of-type(3),
+  .report-row-option span:nth-of-type(5) {
+    display: none;
   }
 }
 
