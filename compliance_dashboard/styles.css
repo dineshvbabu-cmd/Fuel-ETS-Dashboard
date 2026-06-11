@@ -67,8 +67,9 @@ body {
   max-width: calc(100vw - 28px);
   margin: 10px auto 18px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
-  overflow: visible;
+  overflow-x: hidden;
 }
 
 .topbar,
@@ -372,14 +373,24 @@ h4 {
 
 .content-view {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .compact-section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   min-width: 0;
+}
+
+.section-body {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .section-bar {
@@ -737,6 +748,9 @@ h4 {
 .drilldown-pane {
   border-radius: var(--radius-xl);
   padding: 10px 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .chart-canvas-wrap {
@@ -828,9 +842,12 @@ tbody tr:hover {
 
 .calculator-shell {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
-  overflow: visible;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .calculator-toolbar {
@@ -1095,7 +1112,9 @@ tbody tr:hover {
 .compact-table-card {
   padding: 8px;
   min-width: 0;
-  overflow: visible;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .detail-table-card {
@@ -1157,11 +1176,13 @@ tbody tr:hover {
 .calculator-history {
   margin-top: 12px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
 .calculator-history-groups {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
