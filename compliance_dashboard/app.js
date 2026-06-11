@@ -10,7 +10,7 @@ import {
   numberOrZero,
   persistableState,
   recalculateWorkbook,
-} from "./engine.js";
+} from "./engine.js?v=2026.06.11.7";
 
 const LIBRARY_PAGE_SIZE = 100;
 const CALCULATOR_HISTORY_PAGE_SIZE = 100;
@@ -3941,7 +3941,7 @@ function handleMainInput(event) {
 
 async function bootstrap() {
   let eventsWired = false;
-  const seedPromise = fetch("/data/workbook-seed.json")
+  const seedPromise = fetch("/data/workbook-seed.json?v=10.1.1")
     .then((response) => {
       if (!response.ok) throw new Error(`Seed workbook responded with ${response.status}`);
       return response.json();

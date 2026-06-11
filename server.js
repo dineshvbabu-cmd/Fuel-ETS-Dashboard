@@ -111,11 +111,17 @@ function sendFile(res, filePath) {
       return;
     }
     const extension = path.extname(filePath).toLowerCase();
+    const versionedAsset = /[?&]v=[^&]+/.test(String(res.req?.url || ""));
+    const cacheControl = extension === ".html"
+      ? "no-cache"
+      : versionedAsset
+        ? "public, max-age=31536000, immutable"
+        : "no-cache";
     const etag = `"${crypto.createHash("sha1").update(data).digest("hex")}"`;
     if (res.req?.headers?.["if-none-match"] === etag) {
       res.writeHead(304, {
         ETag: etag,
-        "Cache-Control": "no-cache",
+        "Cache-Control": cacheControl,
       });
       res.end();
       return;
@@ -125,7 +131,7 @@ function sendFile(res, filePath) {
     const body = acceptsGzip && compressible.has(extension) && data.length > 1024 ? gzipSync(data) : data;
     res.writeHead(200, {
       "Content-Type": contentTypes[extension] || "application/octet-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": cacheControl,
       ETag: etag,
       Vary: "Accept-Encoding",
       ...(body !== data ? { "Content-Encoding": "gzip" } : {}),
