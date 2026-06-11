@@ -13,7 +13,9 @@ import {
 } from "./engine.js";
 
 const PAGE_SIZE = 18;
+const CALCULATOR_HISTORY_PAGE_SIZE = 20;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
+const APP_BUILD = "2026.06.11.2";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -69,6 +71,7 @@ const stateStore = {
     detailScrollLeft: 0,
     calculatorSelectedId: null,
     calculatorHistoryOpen: false,
+    calculatorHistoryPage: 1,
     libraryOpen: false,
     librarySheet: "parameters",
     librarySearch: "",
@@ -94,13 +97,13 @@ const numericColumns = {
 const CALCULATOR_COLUMNS = [
   { key: "recordId", label: "Voyage / Port-Stay ID", kind: "sticky-editable", input: "text", width: 130, placeholder: "V001 / P001" },
   { key: "type", label: "Type", kind: "sticky-editable", input: "select", width: 120, options: ["Voyage", "Port Stay"] },
-  { key: "imoNo", label: "IMO No.", kind: "editable", input: "text", width: 110, list: "imoNumbers" },
+  { key: "imoNo", label: "IMO No.", kind: "sticky-editable", input: "text", width: 110, list: "imoNumbers" },
   { key: "vesselName", label: "Vessel Name", kind: "sticky", width: 150 },
-  { key: "shipType", label: "Ship Type", kind: "sticky", width: 150 },
-  { key: "flagState", label: "Flag State", kind: "sticky", width: 120 },
-  { key: "deadweightTonnes", label: "Deadweight (DWT, t)", kind: "sticky-number", width: 125, digits: 0 },
-  { key: "netTonnage", label: "Net Tonnage (NT)", kind: "sticky-number", width: 120, digits: 0 },
-  { key: "grossTonnage", label: "Gross Tonnage (GT)", kind: "sticky-number", width: 120, digits: 0 },
+  { key: "shipType", label: "Ship Type", kind: "calculated", width: 150 },
+  { key: "flagState", label: "Flag State", kind: "calculated", width: 120 },
+  { key: "deadweightTonnes", label: "Deadweight (DWT, t)", kind: "calculated-number", width: 125, digits: 0 },
+  { key: "netTonnage", label: "Net Tonnage (NT)", kind: "calculated-number", width: 120, digits: 0 },
+  { key: "grossTonnage", label: "Gross Tonnage (GT)", kind: "calculated-number", width: 120, digits: 0 },
   { key: "departureDate", label: "Departure Date", kind: "editable", input: "date", width: 120 },
   { key: "fromPortCode", label: "From Port UN/LOCODE", kind: "editable", input: "text", width: 130, list: "portCodes" },
   { key: "fromPortName", label: "From Port Name", kind: "calculated", width: 150 },
@@ -347,6 +350,16 @@ function countRowsForYear(year) {
   return stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row) && resolveRowStorageYear(row) === year).length;
 }
 
+function compactCalculatorRowsForRuntime() {
+  const rows = Array.isArray(stateStore.state.calculatorRows) ? stateStore.state.calculatorRows : [];
+  const meaningfulRows = rows.filter((row) => rowHasMeaningfulInputs(row));
+  const existingDraft = rows.find((row) => !rowHasMeaningfulInputs(row));
+  const draft = existingDraft ? { ...existingDraft } : blankCalculatorRow();
+  draft.recordId = "";
+  draft.type = draft.type === "Port Stay" ? "Port Stay" : "Voyage";
+  stateStore.state.calculatorRows = [...meaningfulRows, draft];
+}
+
 function compareCalculatorRows(a, b) {
   const yearDiff = resolveRowStorageYear(b) - resolveRowStorageYear(a);
   if (yearDiff !== 0) return yearDiff;
@@ -473,14 +486,12 @@ function recomputeAndRender() {
   if (syncCalculatorDraftRowsWithDerived()) {
     stateStore.derived = recalculateWorkbook(stateStore.state);
   }
-  if (!stateStore.state.calculatorRows.some((row) => !rowHasMeaningfulInputs(row))) {
-    const selectedStateRow = getCalculatorStateRow(stateStore.ui.calculatorSelectedId);
-    const draftRow = buildCalculatorRowForCurrentFilter(selectedStateRow && rowHasMeaningfulInputs(selectedStateRow) ? selectedStateRow : null);
+  if (!getCalculatorStateRow(stateStore.ui.calculatorSelectedId)) {
+    const draftRow = buildCalculatorRowForCurrentFilter();
     stateStore.state.calculatorRows.unshift(draftRow);
     stateStore.ui.calculatorSelectedId = draftRow.id;
     stateStore.derived = recalculateWorkbook(stateStore.state);
   }
-  pruneCalculatorDraftRows([stateStore.ui.calculatorSelectedId]);
   stateStore.state.parameters = deepClone(stateStore.derived.parameters);
   saveState();
   render();
@@ -2116,7 +2127,7 @@ function renderDashboardCharts() {
 
 function ensureCalculatorSelection() {
   const selectedStateRow = getCalculatorStateRow(stateStore.ui.calculatorSelectedId);
-  if (selectedStateRow && !rowHasMeaningfulInputs(selectedStateRow)) {
+  if (selectedStateRow) {
     return stateStore.derived.calculatorRows.find((row) => row.id === selectedStateRow.id) || null;
   }
 
@@ -2133,6 +2144,7 @@ function ensureCalculatorSelection() {
 function nextRecordSerial(type) {
   const prefix = type === "Port Stay" ? "P" : "V";
   const values = stateStore.state.calculatorRows
+    .filter((row) => rowHasMeaningfulInputs(row))
     .map((row) => String(row.recordId || "").trim().toUpperCase())
     .filter((value) => value.startsWith(prefix))
     .map((value) => Number(value.slice(1)))
@@ -2427,7 +2439,11 @@ function renderCalculatorHistory(historyRows, visibleColumns, computedWidths, st
     return "";
   }
 
-  const yearGroups = groupCalculatorRowsByYear(historyRows);
+  const pageCount = Math.max(1, Math.ceil(historyRows.length / CALCULATOR_HISTORY_PAGE_SIZE));
+  stateStore.ui.calculatorHistoryPage = Math.min(Math.max(1, stateStore.ui.calculatorHistoryPage), pageCount);
+  const pageStart = (stateStore.ui.calculatorHistoryPage - 1) * CALCULATOR_HISTORY_PAGE_SIZE;
+  const pageRows = historyRows.slice(pageStart, pageStart + CALCULATOR_HISTORY_PAGE_SIZE);
+  const yearGroups = stateStore.ui.calculatorHistoryOpen ? groupCalculatorRowsByYear(pageRows) : [];
   return `
     <div class="calculator-history">
       <button class="section-bar calculator-history-toggle" type="button" data-action="toggle-calculator-history">
@@ -2440,69 +2456,80 @@ function renderCalculatorHistory(historyRows, visibleColumns, computedWidths, st
         </span>
         <span class="section-bar-note">Rows are grouped by reporting year and scroll inside each section</span>
       </button>
-      <div class="section-body ${stateStore.ui.calculatorHistoryOpen ? "" : "collapsed"}">
-        <div class="calculator-history-groups">
-          ${yearGroups
-            .map(
-              ([year, rows]) => `
-                <section class="calculator-year-group">
-                  <div class="calculator-year-head">
-                    <span class="eyebrow">Reporting Year</span>
-                    <strong>${year}</strong>
-                    <span class="chip">${rows.length} rows / ${MAX_CALCULATOR_ROWS_PER_YEAR} max</span>
-                  </div>
-                  <div class="table-wrap calculator-history-wrap" data-scroll-group="calculator-history">
-                    <table class="calculator-history-table" style="width:${totalTableWidth}px;min-width:${totalTableWidth}px">
-                      <thead>
-                        <tr>
-                          ${visibleColumns.map((column) => {
-                            const columnWidth = computedWidths.get(column.key) || column.width || 120;
-                            const classes = ["calculator-header"];
-                            const styleParts = [`min-width:${columnWidth}px`, `width:${columnWidth}px`];
-                            if (column.kind.includes("sticky")) {
-                              classes.push("sticky-header");
-                              styleParts.push(`left:${stickyOffsets.get(column.key) || 0}px`);
-                            } else if (column.kind.includes("editable")) {
-                              classes.push("editable-header");
-                            } else if (column.kind.includes("calculated")) {
-                              classes.push("calculated-header");
-                            } else if (column.kind === "actions") {
-                              classes.push("actions-header");
-                            }
-                            return `<th class="${classes.join(" ")}" style="${styleParts.join(";")}">${column.label}</th>`;
-                          }).join("")}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${rows
-                          .map((row) => {
-                            const sourceRow = getCalculatorStateRow(row.id);
-                            return `
+      ${
+        stateStore.ui.calculatorHistoryOpen
+          ? `
+            <div class="section-body">
+              <div class="calculator-history-groups">
+                ${yearGroups
+                  .map(
+                    ([year, rows]) => `
+                      <section class="calculator-year-group">
+                        <div class="calculator-year-head">
+                          <span class="eyebrow">Reporting Year</span>
+                          <strong>${year}</strong>
+                          <span class="chip">${rows.length} on this page / ${MAX_CALCULATOR_ROWS_PER_YEAR} max per year</span>
+                        </div>
+                        <div class="table-wrap calculator-history-wrap" data-scroll-group="calculator-history">
+                          <table class="calculator-history-table" style="width:${totalTableWidth}px;min-width:${totalTableWidth}px">
+                            <thead>
                               <tr>
-                                ${visibleColumns
-                                  .map((column) =>
-                                    renderCalculatorCell(
-                                      row,
-                                      sourceRow || blankCalculatorRow(),
-                                      { ...column, width: computedWidths.get(column.key) || column.width || 120 },
-                                      stickyOffsets.get(column.key) || 0,
-                                      "history"
-                                    )
-                                  )
-                                  .join("")}
+                                ${visibleColumns.map((column) => {
+                                  const columnWidth = computedWidths.get(column.key) || column.width || 120;
+                                  const classes = ["calculator-header"];
+                                  const styleParts = [`min-width:${columnWidth}px`, `width:${columnWidth}px`];
+                                  if (column.kind.includes("sticky")) {
+                                    classes.push("sticky-header");
+                                    styleParts.push(`left:${stickyOffsets.get(column.key) || 0}px`);
+                                  } else if (column.kind.includes("editable")) {
+                                    classes.push("editable-header");
+                                  } else if (column.kind.includes("calculated")) {
+                                    classes.push("calculated-header");
+                                  } else if (column.kind === "actions") {
+                                    classes.push("actions-header");
+                                  }
+                                  return `<th class="${classes.join(" ")}" style="${styleParts.join(";")}">${column.label}</th>`;
+                                }).join("")}
                               </tr>
-                            `;
-                          })
-                          .join("")}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              `
-            )
-            .join("")}
-        </div>
-      </div>
+                            </thead>
+                            <tbody>
+                              ${rows
+                                .map((row) => {
+                                  const sourceRow = getCalculatorStateRow(row.id);
+                                  return `
+                                    <tr>
+                                      ${visibleColumns
+                                        .map((column) =>
+                                          renderCalculatorCell(
+                                            row,
+                                            sourceRow || blankCalculatorRow(),
+                                            { ...column, width: computedWidths.get(column.key) || column.width || 120 },
+                                            stickyOffsets.get(column.key) || 0,
+                                            "history"
+                                          )
+                                        )
+                                        .join("")}
+                                    </tr>
+                                  `;
+                                })
+                                .join("")}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    `
+                  )
+                  .join("")}
+              </div>
+              <div class="calculator-history-pagination">
+                <button class="inline-button compact-button" type="button" data-action="calculator-history-prev" ${stateStore.ui.calculatorHistoryPage === 1 ? "disabled" : ""}>Previous</button>
+                <span>Page ${stateStore.ui.calculatorHistoryPage} of ${pageCount}</span>
+                <button class="inline-button compact-button" type="button" data-action="calculator-history-next" ${stateStore.ui.calculatorHistoryPage === pageCount ? "disabled" : ""}>Next</button>
+              </div>
+            </div>
+          `
+          : ""
+      }
     </div>
   `;
 }
@@ -2655,7 +2682,6 @@ function render() {
 
 async function loadEuaMarketSnapshot() {
   stateStore.market.status = "loading";
-  render();
 
   try {
     const response = await fetch("/api/market/eua");
@@ -2680,6 +2706,20 @@ function csvEscape(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+function showToast(message, tone = "success") {
+  document.querySelector(".app-toast")?.remove();
+  const toast = document.createElement("div");
+  toast.className = `app-toast ${tone}`;
+  toast.setAttribute("role", "status");
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  window.requestAnimationFrame(() => toast.classList.add("visible"));
+  window.setTimeout(() => {
+    toast.classList.remove("visible");
+    window.setTimeout(() => toast.remove(), 180);
+  }, 3200);
+}
+
 function downloadText(filename, content, type = "text/plain") {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -2691,6 +2731,7 @@ function downloadText(filename, content, type = "text/plain") {
   document.body.appendChild(link);
   window.requestAnimationFrame(() => {
     link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    showToast(`Export started: ${filename}`, "success");
     window.setTimeout(() => {
       URL.revokeObjectURL(url);
       link.remove();
@@ -2902,9 +2943,6 @@ function updateCalculatorCell(rowId, field, rawValue, commit = true, context = "
   }
   if (commit) {
     sortCalculatorRowsInPlace();
-    if (context === "active" && rowHasMeaningfulInputs(row)) {
-      ensureDraftRow(row, row.id);
-    }
     recomputeAndRender();
   }
 }
@@ -3082,11 +3120,26 @@ function handleMainClick(event) {
   }
 
   if (action === "add-calculator-row") {
-    const row = buildCalculatorRowForCurrentFilter();
-    insertCalculatorRow(row);
+    const currentRow = getCalculatorStateRow(stateStore.ui.calculatorSelectedId);
+    if (!currentRow || !rowHasMeaningfulInputs(currentRow)) {
+      stateStore.ui.calculatorActiveScrollLeft = 0;
+      render();
+      window.requestAnimationFrame(() => {
+        elements.contentView.querySelector('[data-calc-cell="imoNo"]')?.focus();
+      });
+      showToast("Complete the current row before adding another voyage.", "info");
+      return;
+    }
+    const row = buildCalculatorRowForCurrentFilter(currentRow);
+    insertCalculatorRow(row, currentRow.id);
     stateStore.ui.calculatorSelectedId = row.id;
     stateStore.ui.calculatorActiveScrollLeft = 0;
+    stateStore.ui.calculatorHistoryPage = 1;
     recomputeAndRender();
+    window.requestAnimationFrame(() => {
+      elements.contentView.querySelector('[data-calc-cell="imoNo"]')?.focus();
+    });
+    showToast(`New voyage input ${row.recordId} is ready.`, "success");
     return;
   }
 
@@ -3145,7 +3198,9 @@ function handleMainClick(event) {
     if (index === -1) return;
     stateStore.state.calculatorRows.splice(index, 1);
     stateStore.ui.calculatorSelectedId = null;
+    stateStore.ui.calculatorHistoryPage = 1;
     recomputeAndRender();
+    showToast("Voyage row deleted.", "success");
     return;
   }
 
@@ -3155,7 +3210,9 @@ function handleMainClick(event) {
     insertCalculatorRow(row, rowId);
     stateStore.ui.calculatorSelectedId = row.id;
     stateStore.ui.calculatorActiveScrollLeft = 0;
+    stateStore.ui.calculatorHistoryPage = 1;
     recomputeAndRender();
+    showToast(`Inserted ${row.recordId} below the selected voyage.`, "success");
     return;
   }
 
@@ -3196,6 +3253,18 @@ function handleMainClick(event) {
 
   if (action === "toggle-calculator-history") {
     stateStore.ui.calculatorHistoryOpen = !stateStore.ui.calculatorHistoryOpen;
+    render();
+    return;
+  }
+
+  if (action === "calculator-history-prev") {
+    stateStore.ui.calculatorHistoryPage = Math.max(1, stateStore.ui.calculatorHistoryPage - 1);
+    render();
+    return;
+  }
+
+  if (action === "calculator-history-next") {
+    stateStore.ui.calculatorHistoryPage += 1;
     render();
     return;
   }
@@ -3244,6 +3313,7 @@ function handleMainInput(event) {
 
   if (event.target.dataset.action === "calculator-search") {
     stateStore.ui.calculatorSearch = event.target.value;
+    stateStore.ui.calculatorHistoryPage = 1;
     render();
     return;
   }
@@ -3265,12 +3335,14 @@ async function bootstrap() {
   const seed = await response.json();
   stateStore.seedState = createStateFromSeed(seed);
   stateStore.state = hydrateFromStorage(stateStore.seedState);
+  compactCalculatorRowsForRuntime();
   stateStore.derived = recalculateWorkbook(stateStore.state);
   if (syncCalculatorDraftRowsWithDerived()) {
     stateStore.derived = recalculateWorkbook(stateStore.state);
   }
   stateStore.state.parameters = deepClone(stateStore.derived.parameters);
   ensureCalculatorSelection();
+  saveState();
 
   elements.viewTabs.addEventListener("click", handleMainClick);
   elements.contentView.addEventListener("click", handleMainClick);
@@ -3279,6 +3351,9 @@ async function bootstrap() {
   elements.vesselFilter.addEventListener("change", (event) => {
     stateStore.ui.vesselFilter = event.target.value;
     stateStore.ui.calculatorSelectedId = null;
+    stateStore.ui.calculatorHistoryPage = 1;
+    stateStore.ui.calculatorActiveScrollLeft = 0;
+    stateStore.ui.calculatorHistoryScrollLeft = 0;
     stateStore.ui.drilldown = null;
     stateStore.ui.detailSearch = "";
     stateStore.ui.detailScope = "all";
@@ -3303,6 +3378,7 @@ async function bootstrap() {
   if (elements.resetWorkbookButton) {
     elements.resetWorkbookButton.addEventListener("click", () => {
       stateStore.state = deepClone(stateStore.seedState);
+      compactCalculatorRowsForRuntime();
       stateStore.ui.calculatorSelectedId = null;
       stateStore.ui.drilldown = null;
       stateStore.ui.detailSearch = "";
@@ -3319,6 +3395,7 @@ async function bootstrap() {
   elements.saveEditorButton.addEventListener("click", saveEditorDialog);
 
   window.fuelEtsDashboard = {
+    build: APP_BUILD,
     importVoyageRows: importVoyageRowsFromExternal,
     exportState: () => deepClone(stateStore.state),
     getBlankVoyageTemplate: () => deepClone(blankCalculatorRow()),

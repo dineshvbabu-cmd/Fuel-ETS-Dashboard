@@ -137,7 +137,7 @@ h4 {
   flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 10px;
-  align-items: center;
+  align-items: flex-end;
   min-width: 0;
 }
 
@@ -822,8 +822,8 @@ th,
 td {
   padding: 7px 8px;
   border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
+  text-align: center;
+  vertical-align: middle;
 }
 
 th {
@@ -841,7 +841,7 @@ tbody tr:hover {
 }
 
 .number-cell {
-  text-align: right;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1038,7 +1038,7 @@ tbody tr:hover {
 
 .calculator-header {
   padding: 7px 8px;
-  text-align: left;
+  text-align: center;
   font-size: 0.66rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1093,6 +1093,8 @@ tbody tr:hover {
   width: 100%;
   min-width: 100%;
   padding: 6px 7px;
+  text-align: center;
+  text-align-last: center;
   border-radius: 6px;
   border: 1px solid rgba(244, 177, 94, 0.42);
   background: linear-gradient(180deg, #fff3e1 0%, #fde7c8 100%);
@@ -1176,6 +1178,13 @@ tbody tr:hover {
   width: max-content;
   min-width: 1760px;
   table-layout: auto;
+  margin-right: 24px;
+}
+
+.detail-table th:last-child,
+.detail-table td:last-child {
+  min-width: 164px;
+  padding-right: 28px;
 }
 
 .calculator-history {
@@ -1230,6 +1239,15 @@ tbody tr:hover {
   table-layout: auto;
 }
 
+.calculator-history-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 2px;
+  color: var(--muted);
+}
+
 .history-row-actions {
   display: flex;
   justify-content: flex-end;
@@ -1261,16 +1279,45 @@ tbody tr:hover {
 }
 
 .detail-number-cell {
-  text-align: right;
+  text-align: center;
   white-space: nowrap;
 }
 
 .detail-value {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 4px;
   width: 100%;
+}
+
+.app-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 100;
+  max-width: min(440px, calc(100vw - 44px));
+  padding: 11px 14px;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--primary-strong);
+  box-shadow: 0 14px 34px rgba(22, 44, 77, 0.24);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.app-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.app-toast.success {
+  background: #147c46;
+}
+
+.app-toast.info {
+  background: var(--primary-strong);
 }
 
 .detail-note {
@@ -1460,6 +1507,10 @@ button:hover {
 }
 
 @media (max-width: 1020px) {
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
   .chart-grid,
   .calculator-grid,
   .field-grid,
@@ -1499,7 +1550,6 @@ button:hover {
   }
 
   .topbar-icon-group {
-    width: 100%;
     justify-content: flex-start;
   }
 }
