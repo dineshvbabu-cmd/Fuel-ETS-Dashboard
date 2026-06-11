@@ -165,6 +165,7 @@ h4 {
 .sheet-tab,
 .icon-button,
 .report-button,
+.pdf-export-button,
 .inline-button,
 .primary-button,
 .danger-button {
@@ -234,6 +235,16 @@ h4 {
   background: linear-gradient(135deg, #16829a 0%, #07556b 100%);
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+.pdf-export-button {
+  min-height: 40px;
+  padding: 0 13px;
+  border-color: transparent;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .sync-status {

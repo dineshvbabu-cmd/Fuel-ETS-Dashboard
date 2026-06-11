@@ -16,7 +16,7 @@ const LIBRARY_PAGE_SIZE = 100;
 const CALCULATOR_HISTORY_PAGE_SIZE = 100;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REMOTE_SAVE_DELAY_MS = 700;
-const APP_BUILD = "2026.06.11.4";
+const APP_BUILD = "2026.06.11.5";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -2941,6 +2941,38 @@ function openReportDialog() {
   elements.reportDialog.showModal();
 }
 
+async function requestComplianceReport(vessel, rows, selectionLabel) {
+  if (!vessel || !rows.length) {
+    throw new Error("A vessel with at least one voyage or port stay is required.");
+  }
+  const response = await fetch("/api/reports/compliance-statement", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vessel,
+      rows,
+      reportYear: stateStore.derived.parameterValues.reportYear,
+      euaPrice: stateStore.derived.parameterValues.euaPrice,
+      issuedAt: new Date().toISOString(),
+      selectionLabel,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || `Report service responded with ${response.status}`);
+  }
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filename =
+    disposition.match(/filename="([^"]+)"/i)?.[1] ||
+    `Statement_${vessel.vesselName}_${stateStore.derived.parameterValues.reportYear}.pdf`;
+  const blob = await response.blob();
+  if (blob.type !== "application/pdf") {
+    throw new Error("The report service did not return a PDF file.");
+  }
+  downloadBlob(filename, blob);
+  return filename;
+}
+
 async function generateComplianceReport() {
   const imoNo = elements.reportVesselSelect.value;
   const vessel = stateStore.state.fleet.find((item) => String(item.imoNo) === String(imoNo));
@@ -2963,28 +2995,13 @@ async function generateComplianceReport() {
   elements.generateReportConfirmButton.disabled = true;
   elements.generateReportConfirmButton.textContent = "Generating...";
   try {
-    const response = await fetch("/api/reports/compliance-statement", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        vessel,
-        rows,
-        reportYear: stateStore.derived.parameterValues.reportYear,
-        euaPrice: stateStore.derived.parameterValues.euaPrice,
-        issuedAt: new Date().toISOString(),
-        selectionLabel:
-          basis === "vessel"
-            ? `All ${rows.length} records for ${vessel.vesselName}`
-            : `${rows.length} selected records: ${rows.map((row) => row.recordId).join(", ")}`,
-      }),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || `Report service responded with ${response.status}`);
-    }
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const filename = disposition.match(/filename="([^"]+)"/i)?.[1] || `Statement_${vessel.vesselName}_${stateStore.derived.parameterValues.reportYear}.pdf`;
-    downloadBlob(filename, await response.blob());
+    const filename = await requestComplianceReport(
+      vessel,
+      rows,
+      basis === "vessel"
+        ? `All ${rows.length} records for ${vessel.vesselName}`
+        : `${rows.length} selected records: ${rows.map((row) => row.recordId).join(", ")}`
+    );
     elements.reportDialog.close();
     showToast(`Report generated: ${filename}`, "success");
   } catch (error) {
@@ -2992,6 +3009,37 @@ async function generateComplianceReport() {
   } finally {
     elements.generateReportConfirmButton.disabled = false;
     elements.generateReportConfirmButton.textContent = "Generate PDF";
+  }
+}
+
+async function exportSelectedVesselPdf() {
+  if (stateStore.ui.vesselFilter === "all") {
+    openReportDialog();
+    showToast("Select a vessel in the report window to download its PDF.", "info");
+    return;
+  }
+
+  const vessel = stateStore.state.fleet.find((item) => item.vesselName === stateStore.ui.vesselFilter);
+  const rows = vessel ? getReportRowsForImo(vessel.imoNo) : [];
+  if (!vessel || !rows.length) {
+    showToast("No voyage or port-stay records are available for the selected vessel.", "info");
+    return;
+  }
+
+  elements.exportFilteredButton.disabled = true;
+  elements.exportFilteredButton.textContent = "PDF...";
+  try {
+    const filename = await requestComplianceReport(
+      vessel,
+      rows,
+      `All ${rows.length} records for ${vessel.vesselName}`
+    );
+    showToast(`PDF downloaded: ${filename}`, "success");
+  } catch (error) {
+    showToast(`PDF could not be downloaded: ${error.message}`, "info");
+  } finally {
+    elements.exportFilteredButton.disabled = false;
+    elements.exportFilteredButton.textContent = "PDF ⤓";
   }
 }
 
@@ -3657,7 +3705,7 @@ async function bootstrap() {
   elements.libraryTabs.addEventListener("click", handleLibraryClick);
   elements.libraryContent.addEventListener("click", handleLibraryClick);
   elements.libraryContent.addEventListener("input", handleLibraryInput);
-  elements.exportFilteredButton.addEventListener("click", exportFilteredData);
+  elements.exportFilteredButton.addEventListener("click", exportSelectedVesselPdf);
   elements.generateReportButton.addEventListener("click", openReportDialog);
   elements.closeReportButton.addEventListener("click", () => elements.reportDialog.close());
   elements.reportVesselSelect.addEventListener("change", renderReportRows);
