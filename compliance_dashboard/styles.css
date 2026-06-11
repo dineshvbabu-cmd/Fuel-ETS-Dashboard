@@ -165,6 +165,7 @@ h4 {
 .sheet-tab,
 .icon-button,
 .report-button,
+.import-button,
 .pdf-export-button,
 .inline-button,
 .primary-button,
@@ -245,6 +246,22 @@ h4 {
   font-size: 0.78rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.import-button {
+  min-height: 40px;
+  padding: 0 14px;
+  border-color: transparent;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.button-blue {
+  background: linear-gradient(135deg, #347fcd 0%, #1d5da4 100%);
+  border-color: transparent;
+  color: #fff;
 }
 
 .sync-status {
@@ -1537,7 +1554,8 @@ body.library-open {
 }
 
 .editor-dialog,
-.report-dialog {
+.report-dialog,
+.import-dialog {
   width: min(760px, calc(100vw - 24px));
   border: none;
   padding: 0;
@@ -1545,13 +1563,15 @@ body.library-open {
 }
 
 .editor-dialog::backdrop,
-.report-dialog::backdrop {
+.report-dialog::backdrop,
+.import-dialog::backdrop {
   background: rgba(24, 44, 77, 0.32);
   backdrop-filter: blur(6px);
 }
 
 .editor-dialog-shell,
-.report-dialog-shell {
+.report-dialog-shell,
+.import-dialog-shell {
   border-radius: 24px;
   padding: 18px;
 }
@@ -1565,6 +1585,126 @@ body.library-open {
   display: grid;
   grid-template-rows: auto auto auto minmax(160px, 1fr) auto;
   gap: 14px;
+}
+
+.import-dialog {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.import-dialog-shell {
+  max-height: min(760px, calc(100vh - 30px));
+  display: grid;
+  grid-template-rows: auto minmax(180px, 1fr) auto;
+  gap: 14px;
+}
+
+.import-dialog-body {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow: auto;
+}
+
+.import-file-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.import-file-summary strong,
+.import-file-summary span {
+  display: block;
+}
+
+.import-file-summary span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.import-sheet-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.import-sheet-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+}
+
+.import-sheet-option input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: #286fbe;
+}
+
+.import-sheet-option strong,
+.import-sheet-option span {
+  display: block;
+}
+
+.import-sheet-option span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.import-mode-panel,
+.import-warning-panel {
+  padding: 14px 16px;
+  border-radius: 16px;
+}
+
+.import-mode-panel {
+  border: 1px solid #e3c78b;
+  background: #fff8e9;
+}
+
+.import-mode-panel label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.import-mode-panel select {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d4bd8c;
+  border-radius: 12px;
+  color: var(--text);
+  background: #fff;
+  font: inherit;
+}
+
+.import-warning-panel {
+  border: 1px solid #efcf8e;
+  color: #765313;
+  background: #fff7df;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.import-progress {
+  min-height: 190px;
+  place-items: center;
+  align-content: center;
+  text-align: center;
 }
 
 .report-settings {
@@ -1754,6 +1894,10 @@ button:hover {
 @media (max-width: 720px) {
   .sync-status {
     display: none;
+  }
+
+  .import-sheet-list {
+    grid-template-columns: 1fr;
   }
 
   .report-basis {

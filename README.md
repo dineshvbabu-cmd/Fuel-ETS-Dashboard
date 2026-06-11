@@ -9,6 +9,7 @@ This project turns the workbook `EU_ETS_FuelEU_Compliance_Calculator_10_1_1.xlsx
 - Instant browser autosave with background server synchronization
 - Cloudflare R2-compatible durable state storage
 - Vessel-level and multi-voyage PDF compliance statements
+- Bulk `.xlsx` and `.xlsm` imports for Voyage Inputs and matching reference-library sheets
 - Editable reference sheets for parameters, fuel factors, fleet, ports, flags, derogations, methodology, and formula guide
 - A JavaScript calculation engine that mirrors the workbook logic for:
   - EU ETS scope and allowance exposure
@@ -25,6 +26,22 @@ npm start
 ```
 
 Open `http://localhost:3000`.
+
+## Import an Excel workbook
+
+Use **Import Excel** in the application header. The importer recognizes these workbook sheets:
+
+- `Calculator`
+- `Parameters`
+- `Fuel_Reference`
+- `Fleet_DB`
+- `Port_DB`
+- `Flag_States`
+- `Derogations`
+- `Methodology`
+- `Formula_Guide`
+
+The preview lets the user select which detected sheets to apply. Voyage Inputs can replace the current rows or merge/update matching rows. Reference-library sheets are replaced only when they are present and selected. Calculated Excel columns are not imported; the application recalculates all dashboard results from the imported input and library data before saving the updated state.
 
 ## Regenerate the workbook seed
 
@@ -77,3 +94,4 @@ When both values are set, Railway's health check remains public while every appl
 - `GET /api/state` retrieves the current shared dashboard snapshot.
 - `PUT /api/state` stores the current dashboard snapshot.
 - `POST /api/reports/compliance-statement` generates the vessel statement PDF.
+- `POST /api/import/excel` parses a workbook and returns a sheet-by-sheet import preview.

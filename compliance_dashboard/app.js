@@ -16,7 +16,7 @@ const LIBRARY_PAGE_SIZE = 100;
 const CALCULATOR_HISTORY_PAGE_SIZE = 100;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REMOTE_SAVE_DELAY_MS = 700;
-const APP_BUILD = "2026.06.11.5";
+const APP_BUILD = "2026.06.11.6";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -42,6 +42,13 @@ const elements = {
   viewTabs: document.getElementById("viewTabs"),
   vesselFilter: document.getElementById("vesselFilter"),
   syncStatus: document.getElementById("syncStatus"),
+  importExcelButton: document.getElementById("importExcelButton"),
+  excelFileInput: document.getElementById("excelFileInput"),
+  importDialog: document.getElementById("importDialog"),
+  importDialogBody: document.getElementById("importDialogBody"),
+  closeImportButton: document.getElementById("closeImportButton"),
+  cancelImportButton: document.getElementById("cancelImportButton"),
+  confirmImportButton: document.getElementById("confirmImportButton"),
   generateReportButton: document.getElementById("generateReportButton"),
   libraryToggleButton: document.getElementById("libraryToggleButton"),
   exportFilteredButton: document.getElementById("exportFilteredButton"),
@@ -80,6 +87,10 @@ const stateStore = {
     status: "idle",
     snapshot: null,
     error: null,
+  },
+  import: {
+    preview: null,
+    loading: false,
   },
   sync: {
     ready: false,
@@ -3043,6 +3054,257 @@ async function exportSelectedVesselPdf() {
   }
 }
 
+function workbookFileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const encoded = String(reader.result || "").split(",", 2)[1];
+      if (!encoded) {
+        reject(new Error("The workbook could not be read."));
+        return;
+      }
+      resolve(encoded);
+    });
+    reader.addEventListener("error", () => reject(reader.error || new Error("The workbook could not be read.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function closeImportDialog() {
+  if (elements.importDialog.open) elements.importDialog.close();
+  stateStore.import.preview = null;
+  stateStore.import.loading = false;
+  elements.excelFileInput.value = "";
+  elements.importExcelButton.disabled = false;
+  elements.importExcelButton.textContent = "Import Excel";
+}
+
+function renderImportPreview() {
+  const preview = stateStore.import.preview;
+  if (!preview) return;
+  const sections = Object.values(preview.sections || {});
+  const warningText = preview.warnings?.length
+    ? `<div class="import-warning-panel"><strong>Review notes</strong><br>${preview.warnings.slice(0, 8).map(escapeHtml).join("<br>")}</div>`
+    : "";
+  const hasCalculator = Boolean(preview.sections?.calculatorRows);
+
+  elements.importDialogBody.classList.remove("import-progress");
+  elements.importDialogBody.innerHTML = `
+    <div class="import-file-summary">
+      <div>
+        <strong>${escapeHtml(preview.fileName)}</strong>
+        <span>${sections.length} supported sheets detected</span>
+      </div>
+      <span>${escapeHtml(preview.workbookSheets.join(", "))}</span>
+    </div>
+    <div>
+      <strong>Select sheets to update</strong>
+      <p class="helper-text">Only checked sheets will change. Libraries not present in this workbook remain untouched.</p>
+    </div>
+    <div class="import-sheet-list">
+      ${sections
+        .map(
+          (section) => `
+            <label class="import-sheet-option">
+              <input type="checkbox" data-import-section="${escapeHtml(section.key)}" checked>
+              <span>
+                <strong>${escapeHtml(section.label)}</strong>
+                <span>${formatInteger(section.rowCount)} rows from ${escapeHtml(section.sourceSheet)}</span>
+              </span>
+            </label>
+          `
+        )
+        .join("")}
+    </div>
+    ${
+      hasCalculator
+        ? `
+          <div class="import-mode-panel">
+            <label>
+              Voyage Inputs update method
+              <select id="calculatorImportMode">
+                <option value="replace">Replace current Voyage Inputs with the Excel rows</option>
+                <option value="merge">Merge and update matching rows</option>
+              </select>
+            </label>
+          </div>
+        `
+        : ""
+    }
+    ${warningText}
+    <div class="import-warning-panel">
+      Imported input values are recalculated by the dashboard engine. Selected reference-library sheets replace their existing library data and are then saved to Railway storage.
+    </div>
+  `;
+  elements.confirmImportButton.disabled = false;
+}
+
+async function handleExcelFileSelection(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!/\.(xlsx|xlsm)$/i.test(file.name)) {
+    showToast("Choose an .xlsx or .xlsm workbook.", "info");
+    elements.excelFileInput.value = "";
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showToast("The workbook must be 20 MB or smaller.", "info");
+    elements.excelFileInput.value = "";
+    return;
+  }
+
+  stateStore.import.loading = true;
+  stateStore.import.preview = null;
+  elements.importExcelButton.disabled = true;
+  elements.importExcelButton.textContent = "Reading...";
+  elements.confirmImportButton.disabled = true;
+  elements.importDialogBody.classList.add("import-progress");
+  elements.importDialogBody.innerHTML = `
+    <div>
+      <strong>Reading ${escapeHtml(file.name)}</strong>
+      <p class="helper-text">Checking Voyage Inputs and all matching reference-library sheets...</p>
+    </div>
+  `;
+  if (!elements.importDialog.open) elements.importDialog.showModal();
+
+  try {
+    const contentBase64 = await workbookFileToBase64(file);
+    const response = await fetch("/api/import/excel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileName: file.name, contentBase64 }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message || `Import service responded with ${response.status}`);
+    stateStore.import.preview = payload;
+    renderImportPreview();
+  } catch (error) {
+    elements.importDialogBody.classList.remove("import-progress");
+    elements.importDialogBody.innerHTML = `
+      <div class="import-warning-panel">
+        <strong>Workbook could not be imported</strong><br>
+        ${escapeHtml(error.message)}
+      </div>
+    `;
+    showToast(`Excel import failed: ${error.message}`, "info");
+  } finally {
+    stateStore.import.loading = false;
+    elements.excelFileInput.value = "";
+    elements.importExcelButton.disabled = false;
+    elements.importExcelButton.textContent = "Import Excel";
+  }
+}
+
+function calculatorImportKey(row) {
+  return [
+    String(row.imoNo || ""),
+    normalizeText(row.recordId).toUpperCase(),
+    normalizeText(row.departureDate),
+    normalizeText(row.arrivalDate),
+    normalizeText(row.fromPortCode).toUpperCase(),
+    normalizeText(row.toPortCode).toUpperCase(),
+  ].join("|");
+}
+
+function mergeImportedCalculatorRows(existingRows, importedRows) {
+  const merged = existingRows.filter(rowHasMeaningfulInputs).map((row) => ({ ...row }));
+  const existingByKey = new Map();
+  merged.forEach((row, index) => {
+    if (rowHasMeaningfulInputs(row)) existingByKey.set(calculatorImportKey(row), index);
+  });
+
+  importedRows.forEach((incoming) => {
+    const key = calculatorImportKey(incoming);
+    const existingIndex = existingByKey.get(key);
+    if (existingIndex === undefined) {
+      merged.push(deepClone(incoming));
+      existingByKey.set(key, merged.length - 1);
+      return;
+    }
+    merged[existingIndex] = {
+      ...deepClone(incoming),
+      id: merged[existingIndex].id,
+    };
+  });
+  return merged;
+}
+
+function validateCalculatorYearLimits(rows) {
+  const counts = new Map();
+  rows.filter(rowHasMeaningfulInputs).forEach((row) => {
+    const year = resolveRowStorageYear(row);
+    counts.set(year, (counts.get(year) || 0) + 1);
+  });
+  const overflow = [...counts.entries()].find(([, count]) => count > MAX_CALCULATOR_ROWS_PER_YEAR);
+  if (overflow) {
+    throw new Error(`${overflow[0]} would contain ${overflow[1]} rows. The maximum is ${MAX_CALCULATOR_ROWS_PER_YEAR} rows per year.`);
+  }
+}
+
+function applyWorkbookImport() {
+  const preview = stateStore.import.preview;
+  if (!preview) return;
+  const selectedKeys = [...elements.importDialogBody.querySelectorAll("[data-import-section]:checked")].map(
+    (input) => input.dataset.importSection
+  );
+  if (!selectedKeys.length) {
+    showToast("Select at least one workbook sheet to import.", "info");
+    return;
+  }
+
+  const backup = deepClone(stateStore.state);
+  elements.confirmImportButton.disabled = true;
+  elements.confirmImportButton.textContent = "Importing...";
+  try {
+    if (selectedKeys.includes("calculatorRows")) {
+      const importedRows = deepClone(preview.sections.calculatorRows.rows);
+      const mode = document.getElementById("calculatorImportMode")?.value || "replace";
+      const nextRows =
+        mode === "merge"
+          ? mergeImportedCalculatorRows(stateStore.state.calculatorRows, importedRows)
+          : importedRows;
+      validateCalculatorYearLimits(nextRows);
+      stateStore.state.calculatorRows = nextRows;
+      const firstImportedKey = importedRows[0] ? calculatorImportKey(importedRows[0]) : "";
+      stateStore.ui.calculatorSelectedId =
+        nextRows.find((row) => firstImportedKey && calculatorImportKey(row) === firstImportedKey)?.id ||
+        nextRows.find(rowHasMeaningfulInputs)?.id ||
+        null;
+      stateStore.ui.calculatorHistoryPage = 1;
+    }
+
+    selectedKeys
+      .filter((key) => key !== "calculatorRows")
+      .forEach((key) => {
+        stateStore.state[key] = deepClone(preview.sections[key].rows);
+      });
+
+    stateStore.state.meta = {
+      ...(stateStore.state.meta || {}),
+      sourceWorkbook: preview.fileName,
+      importedAt: preview.importedAt,
+      importedSheets: selectedKeys.map((key) => preview.sections[key].sourceSheet),
+    };
+    stateStore.ui.vesselFilter = "all";
+    stateStore.ui.activeView = "dashboard";
+    stateStore.ui.libraryPage = 1;
+    recomputeAndRender();
+    closeImportDialog();
+    showToast(
+      `Imported ${selectedKeys.map((key) => preview.sections[key].label).join(", ")}. Dashboard calculations are updated.`,
+      "success"
+    );
+  } catch (error) {
+    stateStore.state = backup;
+    stateStore.derived = recalculateWorkbook(stateStore.state);
+    render();
+    showToast(`Workbook was not applied: ${error.message}`, "info");
+  } finally {
+    elements.confirmImportButton.disabled = false;
+    elements.confirmImportButton.textContent = "Import selected sheets";
+  }
+}
+
 function wireScrollGroup(selector, stateKey, verticalStateKey = null) {
   const regions = [...elements.contentView.querySelectorAll(selector)];
   if (!regions.length) {
@@ -3705,6 +3967,15 @@ async function bootstrap() {
   elements.libraryTabs.addEventListener("click", handleLibraryClick);
   elements.libraryContent.addEventListener("click", handleLibraryClick);
   elements.libraryContent.addEventListener("input", handleLibraryInput);
+  elements.importExcelButton.addEventListener("click", () => elements.excelFileInput.click());
+  elements.excelFileInput.addEventListener("change", handleExcelFileSelection);
+  elements.closeImportButton.addEventListener("click", closeImportDialog);
+  elements.cancelImportButton.addEventListener("click", closeImportDialog);
+  elements.confirmImportButton.addEventListener("click", applyWorkbookImport);
+  elements.importDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeImportDialog();
+  });
   elements.exportFilteredButton.addEventListener("click", exportSelectedVesselPdf);
   elements.generateReportButton.addEventListener("click", openReportDialog);
   elements.closeReportButton.addEventListener("click", () => elements.reportDialog.close());

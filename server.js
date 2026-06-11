@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { URL } = require("url");
 const { getStorageStatus, loadStateDocument, saveStateDocument } = require("./storage");
 const { createComplianceStatement } = require("./report");
+const { MAX_WORKBOOK_BYTES, parseComplianceWorkbook } = require("./excel-import");
 
 const PORT = Number(process.env.PORT || 3000);
 const APP_DIR = path.join(__dirname, "compliance_dashboard");
@@ -257,6 +258,29 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       sendJson(res, error.statusCode || 500, {
+        ok: false,
+        message: error.message,
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/import/excel") {
+    try {
+      const payload = await readJsonBody(req, Math.ceil(MAX_WORKBOOK_BYTES * 1.45) + 1024 * 1024);
+      const encoded = String(payload.contentBase64 || "");
+      if (!encoded) {
+        sendJson(res, 400, { ok: false, message: "Choose an Excel workbook to import." });
+        return;
+      }
+      const workbookBuffer = Buffer.from(encoded, "base64");
+      const parsedWorkbook = await parseComplianceWorkbook(workbookBuffer, payload.fileName);
+      sendJson(res, 200, {
+        ok: true,
+        ...parsedWorkbook,
+      });
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, {
         ok: false,
         message: error.message,
       });

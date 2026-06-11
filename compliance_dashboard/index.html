@@ -29,6 +29,7 @@
 
         <div class="topbar-icon-group">
           <span id="syncStatus" class="sync-status" title="Storage status">Local</span>
+          <button id="importExcelButton" class="import-button button-blue" type="button" title="Import voyage inputs and reference libraries from Excel">Import Excel</button>
           <button id="generateReportButton" class="report-button" type="button" title="Generate vessel compliance statement">Report</button>
           <button id="libraryToggleButton" class="icon-button button-violet" type="button" title="Open calculation library">☰</button>
           <button id="exportFilteredButton" class="pdf-export-button button-green" type="button" title="Download selected vessel PDF">PDF ⤓</button>
@@ -107,6 +108,26 @@
     </form>
   </dialog>
 
+  <dialog id="importDialog" class="import-dialog">
+    <form method="dialog" class="import-dialog-shell">
+      <div class="editor-dialog-head">
+        <div>
+          <p class="eyebrow">Workbook Import</p>
+          <h3>Review Excel updates</h3>
+        </div>
+        <button id="closeImportButton" class="icon-button compact" type="button">Close</button>
+      </div>
+      <div id="importDialogBody" class="import-dialog-body">
+        <p class="helper-text">Choose an Excel workbook to preview its Voyage Inputs and reference-library updates.</p>
+      </div>
+      <div class="editor-dialog-actions">
+        <button id="cancelImportButton" class="inline-button" type="button">Cancel</button>
+        <button id="confirmImportButton" class="primary-button" type="button">Import selected sheets</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input id="excelFileInput" type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" hidden>
   <datalist id="portCodes"></datalist>
   <datalist id="fuelTypes"></datalist>
   <datalist id="imoNumbers"></datalist>
