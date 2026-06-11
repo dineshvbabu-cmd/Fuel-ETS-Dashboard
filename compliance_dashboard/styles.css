@@ -68,7 +68,7 @@ body {
   margin: 10px auto 18px;
   display: grid;
   gap: 10px;
-  overflow-x: clip;
+  overflow: visible;
 }
 
 .topbar,
@@ -137,6 +137,15 @@ h4 {
   justify-content: flex-end;
   gap: 10px;
   align-items: end;
+  min-width: 0;
+}
+
+.topbar-icon-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .view-tabs,
@@ -771,19 +780,23 @@ h4 {
   margin-top: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: auto;
   background: rgba(255, 255, 255, 0.88);
   max-width: 100%;
   width: 100%;
+  min-width: 0;
   scrollbar-gutter: stable both-edges;
   display: block;
+  position: relative;
+  overscroll-behavior-x: contain;
 }
 
 table {
   width: max-content;
   border-collapse: collapse;
   min-width: 760px;
+  table-layout: auto;
 }
 
 th,
@@ -985,6 +998,7 @@ tbody tr:hover {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.74rem;
+  table-layout: auto;
 }
 
 .calculator-table thead th {
@@ -1125,6 +1139,7 @@ tbody tr:hover {
   margin-top: 10px;
   overflow-x: auto;
   overflow-y: auto;
+  max-width: 100%;
   width: 100%;
   min-width: 0;
   display: block;
@@ -1136,6 +1151,7 @@ tbody tr:hover {
 .detail-table {
   width: max-content;
   min-width: 1760px;
+  table-layout: auto;
 }
 
 .calculator-history {
@@ -1174,6 +1190,7 @@ tbody tr:hover {
   max-height: 320px;
   overflow-x: auto;
   overflow-y: auto;
+  max-width: 100%;
   min-width: 0;
   scrollbar-gutter: stable both-edges;
   padding-bottom: 6px;
@@ -1184,6 +1201,7 @@ tbody tr:hover {
 .calculator-history-table {
   width: max-content;
   min-width: 100%;
+  table-layout: auto;
 }
 
 .history-row-actions {
@@ -1445,6 +1463,11 @@ button:hover {
   }
 
   .topbar-controls {
+    justify-content: flex-start;
+  }
+
+  .topbar-icon-group {
+    width: 100%;
     justify-content: flex-start;
   }
 }

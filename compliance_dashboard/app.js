@@ -2272,8 +2272,12 @@ function renderCalculator() {
 
   const visibleColumns = getVisibleCalculatorColumns();
   const focusedInputRow = focusedRow ? stateStore.state.calculatorRows.find((item) => item.id === focusedRow.id) || blankCalculatorRow() : blankCalculatorRow();
+  const inputRowsById = new Map(filteredRows.map((row) => [row.id, getCalculatorStateRow(row.id) || blankCalculatorRow()]));
   const computedWidths = new Map(
-    visibleColumns.map((column) => [column.key, focusedRow ? estimateCalculatorColumnWidth(column, focusedRow, focusedInputRow) : (column.width || 120)])
+    visibleColumns.map((column) => [
+      column.key,
+      filteredRows.length ? estimateCalculatorColumnWidth(column, filteredRows, inputRowsById) : (column.width || 120),
+    ])
   );
   const stickyColumns = visibleColumns.filter((column) => column.kind.startsWith("sticky"));
   let stickyOffset = 0;
@@ -3074,7 +3078,9 @@ function handleMainClick(event) {
   }
 
   if (action === "reset-calculator-columns") {
-    stateStore.ui.calculatorVisibleColumns = [...DEFAULT_CALCULATOR_VISIBLE_COLUMNS];
+    stateStore.ui.calculatorVisibleColumns = CALCULATOR_COLUMNS
+      .filter((column) => column.key !== "rowActions")
+      .map((column) => column.key);
     stateStore.ui.calculatorColumnMenuOpen = true;
     render();
     return;
