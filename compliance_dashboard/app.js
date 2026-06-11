@@ -16,7 +16,7 @@ const LIBRARY_PAGE_SIZE = 100;
 const CALCULATOR_HISTORY_PAGE_SIZE = 100;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REMOTE_SAVE_DELAY_MS = 700;
-const APP_BUILD = "2026.06.11.6";
+const APP_BUILD = "2026.06.11.7";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -101,6 +101,7 @@ const stateStore = {
     timer: null,
     inFlight: false,
     queued: false,
+    localDirty: false,
     error: null,
   },
   ui: {
@@ -441,6 +442,11 @@ async function hydrateFromServer(localState) {
     }
     stateStore.sync.storage = payload.storage;
     stateStore.sync.ready = true;
+    if (stateStore.sync.localDirty && localState) {
+      stateStore.sync.status = "pending";
+      window.setTimeout(() => scheduleRemoteSave(100), 0);
+      return localState;
+    }
     if (payload.exists && payload.document?.state && Array.isArray(payload.document.state.calculatorRows)) {
       stateStore.sync.revision = payload.document.revision || "";
       stateStore.sync.updatedAt = payload.document.updatedAt || "";
@@ -462,6 +468,7 @@ async function hydrateFromServer(localState) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
+  if (!stateStore.sync.ready) stateStore.sync.localDirty = true;
   scheduleRemoteSave();
 }
 
@@ -603,6 +610,17 @@ function hydrateFromStorage(seedState) {
   } catch {
     return deepClone(seedState);
   }
+}
+
+function initializeRuntimeState(nextState) {
+  stateStore.state = nextState;
+  compactCalculatorRowsForRuntime();
+  stateStore.derived = recalculateWorkbook(stateStore.state);
+  if (syncCalculatorDraftRowsWithDerived()) {
+    stateStore.derived = recalculateWorkbook(stateStore.state);
+  }
+  stateStore.state.parameters = deepClone(stateStore.derived.parameters);
+  ensureCalculatorSelection();
 }
 
 function getCollection(sheetKey) {
@@ -3922,101 +3940,120 @@ function handleMainInput(event) {
 }
 
 async function bootstrap() {
-  const response = await fetch("/data/workbook-seed.json");
-  const seed = await response.json();
-  stateStore.seedState = createStateFromSeed(seed);
-  const localState = hydrateFromStorage(stateStore.seedState);
-  stateStore.state = await hydrateFromServer(localState);
-  compactCalculatorRowsForRuntime();
-  stateStore.derived = recalculateWorkbook(stateStore.state);
-  if (syncCalculatorDraftRowsWithDerived()) {
-    stateStore.derived = recalculateWorkbook(stateStore.state);
-  }
-  stateStore.state.parameters = deepClone(stateStore.derived.parameters);
-  ensureCalculatorSelection();
-  saveState();
+  let eventsWired = false;
+  const seedPromise = fetch("/data/workbook-seed.json")
+    .then((response) => {
+      if (!response.ok) throw new Error(`Seed workbook responded with ${response.status}`);
+      return response.json();
+    })
+    .then(createStateFromSeed);
+  const localState = hydrateFromStorage(null);
+  const serverStatePromise = hydrateFromServer(localState);
+  let renderedLocalState = false;
 
-  elements.viewTabs.addEventListener("click", handleMainClick);
-  elements.contentView.addEventListener("click", handleMainClick);
-  elements.contentView.addEventListener("input", handleMainInput);
-  elements.contentView.addEventListener("change", handleMainInput);
-  elements.vesselFilter.addEventListener("change", (event) => {
-    stateStore.ui.vesselFilter = event.target.value;
-    stateStore.ui.calculatorSelectedId = null;
-    stateStore.ui.calculatorHistoryPage = 1;
-    stateStore.ui.calculatorActiveScrollLeft = 0;
-    stateStore.ui.calculatorHistoryScrollLeft = 0;
-    stateStore.ui.calculatorHistoryScrollTop = 0;
-    stateStore.ui.drilldown = null;
-    stateStore.ui.detailSearch = "";
-    stateStore.ui.detailScope = "all";
+  if (localState) {
+    initializeRuntimeState(localState);
     render();
-  });
-  elements.libraryToggleButton.addEventListener("click", () => {
-    stateStore.ui.libraryOpen = !stateStore.ui.libraryOpen;
-    renderLibraryDrawer();
-  });
-  elements.closeLibraryButton.addEventListener("click", () => {
-    stateStore.ui.libraryOpen = false;
-    renderLibraryDrawer();
-  });
-  elements.libraryBackdrop.addEventListener("click", () => {
-    stateStore.ui.libraryOpen = false;
-    renderLibraryDrawer();
-  });
-  elements.libraryTabs.addEventListener("click", handleLibraryClick);
-  elements.libraryContent.addEventListener("click", handleLibraryClick);
-  elements.libraryContent.addEventListener("input", handleLibraryInput);
-  elements.importExcelButton.addEventListener("click", () => elements.excelFileInput.click());
-  elements.excelFileInput.addEventListener("change", handleExcelFileSelection);
-  elements.closeImportButton.addEventListener("click", closeImportDialog);
-  elements.cancelImportButton.addEventListener("click", closeImportDialog);
-  elements.confirmImportButton.addEventListener("click", applyWorkbookImport);
-  elements.importDialog.addEventListener("cancel", (event) => {
-    event.preventDefault();
-    closeImportDialog();
-  });
-  elements.exportFilteredButton.addEventListener("click", exportSelectedVesselPdf);
-  elements.generateReportButton.addEventListener("click", openReportDialog);
-  elements.closeReportButton.addEventListener("click", () => elements.reportDialog.close());
-  elements.reportVesselSelect.addEventListener("change", renderReportRows);
-  elements.reportDialog.addEventListener("change", (event) => {
-    if (event.target.name === "reportBasis" || event.target.matches('.report-row-option input[type="checkbox"]')) {
-      updateReportSelectionSummary();
-    }
-  });
-  elements.selectAllReportRowsButton.addEventListener("click", () => {
-    elements.reportRowList.querySelectorAll('input[type="checkbox"]').forEach((item) => {
-      item.checked = true;
-    });
-    updateReportSelectionSummary();
-  });
-  elements.clearReportRowsButton.addEventListener("click", () => {
-    elements.reportDialog.querySelector('input[name="reportBasis"][value="selected"]').checked = true;
-    elements.reportRowList.querySelectorAll('input[type="checkbox"]').forEach((item) => {
-      item.checked = false;
-    });
-    updateReportSelectionSummary();
-  });
-  elements.generateReportConfirmButton.addEventListener("click", generateComplianceReport);
-  if (elements.resetWorkbookButton) {
-    elements.resetWorkbookButton.addEventListener("click", () => {
-      stateStore.state = deepClone(stateStore.seedState);
-      compactCalculatorRowsForRuntime();
+    performance.mark("fuel-ets-first-render");
+    renderedLocalState = true;
+  }
+  wireApplicationEvents();
+
+  const [seedState, serverState] = await Promise.all([seedPromise, serverStatePromise]);
+  stateStore.seedState = seedState;
+  const resolvedState = serverState || localState || deepClone(seedState);
+  if (!renderedLocalState || resolvedState !== localState) {
+    initializeRuntimeState(resolvedState);
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
+  performance.mark("fuel-ets-hydrated");
+
+  function wireApplicationEvents() {
+    if (eventsWired) return;
+    eventsWired = true;
+    elements.viewTabs.addEventListener("click", handleMainClick);
+    elements.contentView.addEventListener("click", handleMainClick);
+    elements.contentView.addEventListener("input", handleMainInput);
+    elements.contentView.addEventListener("change", handleMainInput);
+    elements.vesselFilter.addEventListener("change", (event) => {
+      stateStore.ui.vesselFilter = event.target.value;
       stateStore.ui.calculatorSelectedId = null;
+      stateStore.ui.calculatorHistoryPage = 1;
+      stateStore.ui.calculatorActiveScrollLeft = 0;
+      stateStore.ui.calculatorHistoryScrollLeft = 0;
+      stateStore.ui.calculatorHistoryScrollTop = 0;
       stateStore.ui.drilldown = null;
       stateStore.ui.detailSearch = "";
       stateStore.ui.detailScope = "all";
-      stateStore.ui.projection = { ...PROJECTION_BASELINE };
-      stateStore.ui.projectionPreset = "baseline";
-      recomputeAndRender();
+      render();
     });
+    elements.libraryToggleButton.addEventListener("click", () => {
+      stateStore.ui.libraryOpen = !stateStore.ui.libraryOpen;
+      renderLibraryDrawer();
+    });
+    elements.closeLibraryButton.addEventListener("click", () => {
+      stateStore.ui.libraryOpen = false;
+      renderLibraryDrawer();
+    });
+    elements.libraryBackdrop.addEventListener("click", () => {
+      stateStore.ui.libraryOpen = false;
+      renderLibraryDrawer();
+    });
+    elements.libraryTabs.addEventListener("click", handleLibraryClick);
+    elements.libraryContent.addEventListener("click", handleLibraryClick);
+    elements.libraryContent.addEventListener("input", handleLibraryInput);
+    elements.importExcelButton.addEventListener("click", () => elements.excelFileInput.click());
+    elements.excelFileInput.addEventListener("change", handleExcelFileSelection);
+    elements.closeImportButton.addEventListener("click", closeImportDialog);
+    elements.cancelImportButton.addEventListener("click", closeImportDialog);
+    elements.confirmImportButton.addEventListener("click", applyWorkbookImport);
+    elements.importDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeImportDialog();
+    });
+    elements.exportFilteredButton.addEventListener("click", exportSelectedVesselPdf);
+    elements.generateReportButton.addEventListener("click", openReportDialog);
+    elements.closeReportButton.addEventListener("click", () => elements.reportDialog.close());
+    elements.reportVesselSelect.addEventListener("change", renderReportRows);
+    elements.reportDialog.addEventListener("change", (event) => {
+      if (event.target.name === "reportBasis" || event.target.matches('.report-row-option input[type="checkbox"]')) {
+        updateReportSelectionSummary();
+      }
+    });
+    elements.selectAllReportRowsButton.addEventListener("click", () => {
+      elements.reportRowList.querySelectorAll('input[type="checkbox"]').forEach((item) => {
+        item.checked = true;
+      });
+      updateReportSelectionSummary();
+    });
+    elements.clearReportRowsButton.addEventListener("click", () => {
+      elements.reportDialog.querySelector('input[name="reportBasis"][value="selected"]').checked = true;
+      elements.reportRowList.querySelectorAll('input[type="checkbox"]').forEach((item) => {
+        item.checked = false;
+      });
+      updateReportSelectionSummary();
+    });
+    elements.generateReportConfirmButton.addEventListener("click", generateComplianceReport);
+    if (elements.resetWorkbookButton) {
+      elements.resetWorkbookButton.addEventListener("click", () => {
+        if (!stateStore.seedState) return;
+        stateStore.state = deepClone(stateStore.seedState);
+        compactCalculatorRowsForRuntime();
+        stateStore.ui.calculatorSelectedId = null;
+        stateStore.ui.drilldown = null;
+        stateStore.ui.detailSearch = "";
+        stateStore.ui.detailScope = "all";
+        stateStore.ui.projection = { ...PROJECTION_BASELINE };
+        stateStore.ui.projectionPreset = "baseline";
+        recomputeAndRender();
+      });
+    }
+    elements.closeEditorButton.addEventListener("click", () => {
+      stateStore.ui.dialog = null;
+      elements.rowEditorDialog.close();
+    });
+    elements.saveEditorButton.addEventListener("click", saveEditorDialog);
   }
-  elements.closeEditorButton.addEventListener("click", () => {
-    stateStore.ui.dialog = null;
-    elements.rowEditorDialog.close();
-  });
-  elements.saveEditorButton.addEventListener("click", saveEditorDialog);
 
   window.fuelEtsDashboard = {
     build: APP_BUILD,
@@ -4027,6 +4064,7 @@ async function bootstrap() {
   };
 
   render();
+  if (!renderedLocalState) performance.mark("fuel-ets-first-render");
   loadEuaMarketSnapshot();
 }
 

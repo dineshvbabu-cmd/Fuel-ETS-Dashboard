@@ -5,6 +5,10 @@ const { S3Client, GetObjectCommand, PutObjectCommand } = require("@aws-sdk/clien
 
 const R2_OBJECT_KEY = process.env.R2_OBJECT_KEY || "fuel-ets/dashboard-state.json";
 const LOCAL_STATE_PATH = process.env.STATE_FILE_PATH || path.join(__dirname, ".runtime", "dashboard-state.json");
+const STATE_CACHE_MS = Number(process.env.STATE_CACHE_MS || 30_000);
+let cachedDocument;
+let cachedAt = 0;
+let loadPromise = null;
 
 function r2Configured() {
   return Boolean(
@@ -112,7 +116,21 @@ async function writeToFile(document) {
 }
 
 async function loadStateDocument() {
-  return r2Configured() ? readFromR2() : readFromFile();
+  if (cachedDocument !== undefined && Date.now() - cachedAt < STATE_CACHE_MS) {
+    return cachedDocument;
+  }
+  if (loadPromise) return loadPromise;
+
+  loadPromise = (r2Configured() ? readFromR2() : readFromFile())
+    .then((document) => {
+      cachedDocument = document;
+      cachedAt = Date.now();
+      return document;
+    })
+    .finally(() => {
+      loadPromise = null;
+    });
+  return loadPromise;
 }
 
 async function saveStateDocument(state, updatedBy = "") {
@@ -130,6 +148,8 @@ async function saveStateDocument(state, updatedBy = "") {
   } else {
     await writeToFile(document);
   }
+  cachedDocument = document;
+  cachedAt = Date.now();
   return document;
 }
 

@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { gzipSync } = require("zlib");
 const { URL } = require("url");
 const { getStorageStatus, loadStateDocument, saveStateDocument } = require("./storage");
 const { createComplianceStatement } = require("./report");
@@ -9,6 +10,7 @@ const { MAX_WORKBOOK_BYTES, parseComplianceWorkbook } = require("./excel-import"
 
 const PORT = Number(process.env.PORT || 3000);
 const APP_DIR = path.join(__dirname, "compliance_dashboard");
+const CHART_JS_PATH = path.join(__dirname, "node_modules", "chart.js", "dist", "chart.umd.js");
 const EUA_MARKET_URL = "https://tradingeconomics.com/commodity/carbon";
 const MARKET_CACHE_MS = 30 * 60 * 1000;
 const marketCache = {
@@ -28,6 +30,18 @@ const contentTypes = {
 
 function sendJson(res, statusCode, body) {
   const payload = JSON.stringify(body);
+  const acceptsGzip = /\bgzip\b/i.test(String(res.req?.headers?.["accept-encoding"] || ""));
+  if (acceptsGzip && Buffer.byteLength(payload) > 1024) {
+    const compressed = gzipSync(Buffer.from(payload));
+    res.writeHead(statusCode, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Encoding": "gzip",
+      Vary: "Accept-Encoding",
+      "Content-Length": compressed.length,
+    });
+    res.end(compressed);
+    return;
+  }
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
@@ -97,10 +111,27 @@ function sendFile(res, filePath) {
       return;
     }
     const extension = path.extname(filePath).toLowerCase();
+    const etag = `"${crypto.createHash("sha1").update(data).digest("hex")}"`;
+    if (res.req?.headers?.["if-none-match"] === etag) {
+      res.writeHead(304, {
+        ETag: etag,
+        "Cache-Control": "no-cache",
+      });
+      res.end();
+      return;
+    }
+    const compressible = new Set([".html", ".css", ".js", ".json", ".txt"]);
+    const acceptsGzip = /\bgzip\b/i.test(String(res.req?.headers?.["accept-encoding"] || ""));
+    const body = acceptsGzip && compressible.has(extension) && data.length > 1024 ? gzipSync(data) : data;
     res.writeHead(200, {
       "Content-Type": contentTypes[extension] || "application/octet-stream",
+      "Cache-Control": "no-cache",
+      ETag: etag,
+      Vary: "Accept-Encoding",
+      ...(body !== data ? { "Content-Encoding": "gzip" } : {}),
+      "Content-Length": body.length,
     });
-    res.end(data);
+    res.end(body);
   });
 }
 
@@ -305,6 +336,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && parsed.pathname === "/favicon.ico") {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/vendor/chart.umd.js") {
+    sendFile(res, CHART_JS_PATH);
     return;
   }
 
