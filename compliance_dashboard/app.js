@@ -12,11 +12,11 @@ import {
   recalculateWorkbook,
 } from "./engine.js";
 
-const PAGE_SIZE = 18;
-const CALCULATOR_HISTORY_PAGE_SIZE = 20;
+const LIBRARY_PAGE_SIZE = 100;
+const CALCULATOR_HISTORY_PAGE_SIZE = 100;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REMOTE_SAVE_DELAY_MS = 700;
-const APP_BUILD = "2026.06.11.3";
+const APP_BUILD = "2026.06.11.4";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -24,6 +24,18 @@ const PROJECTION_BASELINE = {
   bioType: "Bio-diesel",
   rfnboBlend: 0,
   rfnboType: "e-diesel",
+};
+const EDITOR_SELECT_OPTIONS = {
+  fuelReference: {
+    fuelClass: [
+      { value: "None", label: "None" },
+      { value: "Fossil", label: "Fossil Fuel" },
+      { value: "Biofuel", label: "Biofuel" },
+      { value: "RFNBO", label: "RFNBO" },
+      { value: "Electricity", label: "Electricity" },
+      { value: "Other", label: "Other" },
+    ],
+  },
 };
 
 const elements = {
@@ -88,6 +100,7 @@ const stateStore = {
     calculatorVisibleColumns: [],
     calculatorActiveScrollLeft: 0,
     calculatorHistoryScrollLeft: 0,
+    calculatorHistoryScrollTop: 0,
     detailSearch: "",
     detailScope: "all",
     detailScrollLeft: 0,
@@ -491,36 +504,9 @@ function compactCalculatorRowsForRuntime() {
   stateStore.state.calculatorRows = [...meaningfulRows, draft];
 }
 
-function compareCalculatorRows(a, b) {
-  const yearDiff = resolveRowStorageYear(b) - resolveRowStorageYear(a);
-  if (yearDiff !== 0) return yearDiff;
-
-  const vesselDiff = String(a.vesselName || "").localeCompare(String(b.vesselName || ""));
-  if (vesselDiff !== 0) return vesselDiff;
-
-  const departureA = String(a.departureDate || "");
-  const departureB = String(b.departureDate || "");
-  const departureDiff = departureA.localeCompare(departureB);
-  if (departureDiff !== 0) return departureDiff;
-
-  const arrivalA = String(a.arrivalDate || "");
-  const arrivalB = String(b.arrivalDate || "");
-  const arrivalDiff = arrivalA.localeCompare(arrivalB);
-  if (arrivalDiff !== 0) return arrivalDiff;
-
-  return String(a.recordId || "").localeCompare(String(b.recordId || ""));
-}
-
 function pruneCalculatorDraftRows(keepIds = []) {
   const keep = new Set(keepIds.filter(Boolean));
   stateStore.state.calculatorRows = stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row) || keep.has(row.id));
-}
-
-function sortCalculatorRowsInPlace() {
-  const drafts = stateStore.state.calculatorRows.filter((row) => !rowHasMeaningfulInputs(row));
-  const saved = stateStore.state.calculatorRows.filter((row) => rowHasMeaningfulInputs(row));
-  saved.sort(compareCalculatorRows);
-  stateStore.state.calculatorRows = [...drafts, ...saved];
 }
 
 function getVisibleCalculatorColumnKeys() {
@@ -2585,7 +2571,7 @@ function renderCalculatorHistory(historyRows, visibleColumns, computedWidths, st
             ${renderSectionBadge(`${historyRows.length} stored`)}
           </span>
         </span>
-        <span class="section-bar-note">Rows are grouped by reporting year and scroll inside each section</span>
+        <span class="section-bar-note">Up to ${CALCULATOR_HISTORY_PAGE_SIZE} rows per page. Editing keeps each row in its current position.</span>
       </button>
       ${
         stateStore.ui.calculatorHistoryOpen
@@ -2716,11 +2702,14 @@ function renderLibraryContent() {
     if (!search) return true;
     return Object.values(row).some((value) => lower(value).includes(search));
   });
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / LIBRARY_PAGE_SIZE));
   if (stateStore.ui.libraryPage > pageCount) {
     stateStore.ui.libraryPage = pageCount;
   }
-  const pageRows = filteredRows.slice((stateStore.ui.libraryPage - 1) * PAGE_SIZE, stateStore.ui.libraryPage * PAGE_SIZE);
+  const pageRows = filteredRows.slice(
+    (stateStore.ui.libraryPage - 1) * LIBRARY_PAGE_SIZE,
+    stateStore.ui.libraryPage * LIBRARY_PAGE_SIZE
+  );
   const visibleColumns = getLibraryDisplayColumns(sheetKey);
 
   elements.libraryContent.innerHTML = `
@@ -2791,6 +2780,7 @@ function renderContent() {
 function renderLibraryDrawer() {
   elements.libraryDrawer.classList.toggle("open", stateStore.ui.libraryOpen);
   elements.libraryBackdrop.classList.toggle("open", stateStore.ui.libraryOpen);
+  document.body.classList.toggle("library-open", stateStore.ui.libraryOpen);
   renderLibraryTabs();
   renderLibraryContent();
 }
@@ -3005,15 +2995,19 @@ async function generateComplianceReport() {
   }
 }
 
-function wireScrollGroup(selector, stateKey) {
+function wireScrollGroup(selector, stateKey, verticalStateKey = null) {
   const regions = [...elements.contentView.querySelectorAll(selector)];
   if (!regions.length) {
     return;
   }
 
   const savedScrollLeft = Number(stateStore.ui[stateKey] || 0);
+  const savedScrollTop = verticalStateKey ? Number(stateStore.ui[verticalStateKey] || 0) : 0;
   regions.forEach((region) => {
     region.scrollLeft = savedScrollLeft;
+    if (verticalStateKey) {
+      region.scrollTop = savedScrollTop;
+    }
   });
 
   let syncing = false;
@@ -3027,6 +3021,9 @@ function wireScrollGroup(selector, stateKey) {
         syncing = true;
         const nextScrollLeft = region.scrollLeft;
         stateStore.ui[stateKey] = nextScrollLeft;
+        if (verticalStateKey) {
+          stateStore.ui[verticalStateKey] = region.scrollTop;
+        }
         regions.forEach((otherRegion) => {
           if (otherRegion !== region && Math.abs(otherRegion.scrollLeft - nextScrollLeft) > 1) {
             otherRegion.scrollLeft = nextScrollLeft;
@@ -3042,7 +3039,11 @@ function wireScrollGroup(selector, stateKey) {
 function wireContentScrollRegions() {
   wireScrollGroup('[data-scroll-group="detail"]', "detailScrollLeft");
   wireScrollGroup('[data-scroll-group="calculator-active"]', "calculatorActiveScrollLeft");
-  wireScrollGroup('[data-scroll-group="calculator-history"]', "calculatorHistoryScrollLeft");
+  wireScrollGroup(
+    '[data-scroll-group="calculator-history"]',
+    "calculatorHistoryScrollLeft",
+    "calculatorHistoryScrollTop"
+  );
 }
 
 function exportValueForColumn(row, column) {
@@ -3208,7 +3209,6 @@ function updateCalculatorCell(rowId, field, rawValue, commit = true, context = "
     stateStore.ui.calculatorSelectedId = rowId;
   }
   if (commit) {
-    sortCalculatorRowsInPlace();
     recomputeAndRender();
   }
 }
@@ -3235,6 +3235,7 @@ function renderEditorDialog() {
     .map((column) => {
       const value = draft[column] ?? "";
       const multiline = column.toLowerCase().includes("note") || column.toLowerCase().includes("detail") || column.toLowerCase().includes("formula");
+      const selectOptions = EDITOR_SELECT_OPTIONS[sheetKey]?.[column];
       const inputType =
         numericColumns[sheetKey]?.has(column) || (sheetKey === "parameters" && column === "value" && draft.type === "number")
           ? "number"
@@ -3243,7 +3244,18 @@ function renderEditorDialog() {
         <div class="editor-field">
           <label for="editor-${column}">${column}</label>
           ${
-            multiline
+            selectOptions
+              ? `
+                <select class="editor-input" id="editor-${column}" data-editor-field="${column}">
+                  ${selectOptions
+                    .map(
+                      (option) =>
+                        `<option value="${escapeHtml(option.value)}" ${String(value) === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+                    )
+                    .join("")}
+                </select>
+              `
+              : multiline
               ? `<textarea class="editor-textarea" id="editor-${column}" data-editor-field="${column}">${value}</textarea>`
               : `<input class="editor-input" id="editor-${column}" type="${inputType}" data-editor-field="${column}" value="${value}">`
           }
@@ -3525,12 +3537,14 @@ function handleMainClick(event) {
 
   if (action === "calculator-history-prev") {
     stateStore.ui.calculatorHistoryPage = Math.max(1, stateStore.ui.calculatorHistoryPage - 1);
+    stateStore.ui.calculatorHistoryScrollTop = 0;
     render();
     return;
   }
 
   if (action === "calculator-history-next") {
     stateStore.ui.calculatorHistoryPage += 1;
+    stateStore.ui.calculatorHistoryScrollTop = 0;
     render();
     return;
   }
@@ -3580,6 +3594,7 @@ function handleMainInput(event) {
   if (event.target.dataset.action === "calculator-search") {
     stateStore.ui.calculatorSearch = event.target.value;
     stateStore.ui.calculatorHistoryPage = 1;
+    stateStore.ui.calculatorHistoryScrollTop = 0;
     render();
     return;
   }
@@ -3621,6 +3636,7 @@ async function bootstrap() {
     stateStore.ui.calculatorHistoryPage = 1;
     stateStore.ui.calculatorActiveScrollLeft = 0;
     stateStore.ui.calculatorHistoryScrollLeft = 0;
+    stateStore.ui.calculatorHistoryScrollTop = 0;
     stateStore.ui.drilldown = null;
     stateStore.ui.detailSearch = "";
     stateStore.ui.detailScope = "all";

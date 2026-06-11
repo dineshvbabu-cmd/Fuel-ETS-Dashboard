@@ -760,7 +760,8 @@ export function blankRowForSheet(sheetKey) {
     row.type = "text";
   }
   if (sheetKey === "fuelReference") {
-    row.fuelPathway = "(none)";
+    row.fuelPathway = "";
+    row.fuelClass = "Fossil";
     row.rwd = 1;
   }
   return row;

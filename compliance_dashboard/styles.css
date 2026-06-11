@@ -1413,8 +1413,8 @@ tbody tr:hover {
 }
 
 .library-drawer {
-  width: min(620px, 100vw);
-  padding: 12px;
+  width: 100vw;
+  padding: 14px 18px;
 }
 
 .library-head h2,
@@ -1444,7 +1444,7 @@ tbody tr:hover {
 .library-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(24, 44, 77, 0.28);
+  background: rgba(24, 44, 77, 0.18);
   opacity: 0;
   pointer-events: none;
   transition: opacity 160ms ease;
@@ -1457,33 +1457,68 @@ tbody tr:hover {
 
 .library-drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  width: min(720px, 100vw);
-  height: 100vh;
-  padding: 18px;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  padding: 14px 18px;
   display: grid;
   grid-template-rows: auto auto 1fr;
-  gap: 14px;
-  transform: translateX(102%);
-  transition: transform 180ms ease;
-  z-index: 20;
+  gap: 10px;
+  border-radius: 0;
+  transform: translateY(102%);
+  transition: transform 180ms ease, opacity 180ms ease;
+  opacity: 0;
+  z-index: 50;
 }
 
 .library-drawer.open {
-  transform: translateX(0);
+  transform: translateY(0);
+  opacity: 1;
 }
 
 .library-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .library-content {
   min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.library-content > .table-wrap {
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
   overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.library-content > .table-wrap table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.library-content > .table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #eef4fb;
+}
+
+.library-content .pagination-row {
+  margin: 0;
+}
+
+body.library-open {
+  overflow: hidden;
 }
 
 .page-label {
