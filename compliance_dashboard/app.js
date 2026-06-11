@@ -62,7 +62,8 @@ const stateStore = {
     calculatorSearch: "",
     calculatorColumnMenuOpen: false,
     calculatorVisibleColumns: [],
-    calculatorScrollLeft: 0,
+    calculatorActiveScrollLeft: 0,
+    calculatorHistoryScrollLeft: 0,
     detailSearch: "",
     detailScope: "all",
     detailScrollLeft: 0,
@@ -157,7 +158,7 @@ const DETAIL_TABLE_COLUMNS = [
   { key: "euasCostEur", label: "EUA Cost", width: 106, format: "currency" },
   { key: "attainedGhgIntensity", label: "GHG", width: 84, format: "ghg", digits: 2 },
   { key: "complianceBalanceT", label: "Balance t", width: 96, format: "balance", digits: 2 },
-  { key: "fuelEuPenaltyEur", label: "Penalty", width: 94, format: "currency" },
+  { key: "fuelEuPenaltyEur", label: "Penalty", width: 140, format: "currency" },
 ];
 
 const LIBRARY_DISPLAY_COLUMNS = {
@@ -415,6 +416,16 @@ function syncCalculatorDraftRowsWithDerived() {
   let changed = false;
 
   stateStore.state.calculatorRows.forEach((row) => {
+    if (!normalizeText(row.type)) {
+      row.type = "Voyage";
+      changed = true;
+    }
+
+    if (!normalizeText(row.recordId)) {
+      row.recordId = nextRecordSerial(row.type || "Voyage");
+      changed = true;
+    }
+
     const derivedRow = derivedById.get(row.id);
     if (!derivedRow) {
       return;
@@ -2354,7 +2365,7 @@ function renderCalculator() {
           </div>
           <span class="chip">${totalRows} rows / ${activeRows.length} active records</span>
         </div>
-        <div class="calculator-table-wrap" data-scroll-group="calculator">
+        <div class="calculator-table-wrap" data-scroll-group="calculator-active">
           <table class="calculator-table" style="width:${totalTableWidth}px;min-width:${totalTableWidth}px">
             <thead>
               <tr>
@@ -2440,7 +2451,7 @@ function renderCalculatorHistory(historyRows, visibleColumns, computedWidths, st
                     <strong>${year}</strong>
                     <span class="chip">${rows.length} rows / ${MAX_CALCULATOR_ROWS_PER_YEAR} max</span>
                   </div>
-                  <div class="table-wrap calculator-history-wrap" data-scroll-group="calculator">
+                  <div class="table-wrap calculator-history-wrap" data-scroll-group="calculator-history">
                     <table class="calculator-history-table" style="width:${totalTableWidth}px;min-width:${totalTableWidth}px">
                       <thead>
                         <tr>
@@ -2675,10 +2686,16 @@ function downloadText(filename, content, type = "text/plain") {
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  link.rel = "noopener";
+  link.style.display = "none";
   document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 250);
+  window.requestAnimationFrame(() => {
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+      link.remove();
+    }, 4000);
+  });
 }
 
 function wireScrollGroup(selector, stateKey) {
@@ -2717,7 +2734,8 @@ function wireScrollGroup(selector, stateKey) {
 
 function wireContentScrollRegions() {
   wireScrollGroup('[data-scroll-group="detail"]', "detailScrollLeft");
-  wireScrollGroup('[data-scroll-group="calculator"]', "calculatorScrollLeft");
+  wireScrollGroup('[data-scroll-group="calculator-active"]', "calculatorActiveScrollLeft");
+  wireScrollGroup('[data-scroll-group="calculator-history"]', "calculatorHistoryScrollLeft");
 }
 
 function exportValueForColumn(row, column) {
@@ -3067,6 +3085,7 @@ function handleMainClick(event) {
     const row = buildCalculatorRowForCurrentFilter();
     insertCalculatorRow(row);
     stateStore.ui.calculatorSelectedId = row.id;
+    stateStore.ui.calculatorActiveScrollLeft = 0;
     recomputeAndRender();
     return;
   }
@@ -3135,6 +3154,7 @@ function handleMainClick(event) {
     const row = buildCalculatorRowForCurrentFilter(sourceStateRow);
     insertCalculatorRow(row, rowId);
     stateStore.ui.calculatorSelectedId = row.id;
+    stateStore.ui.calculatorActiveScrollLeft = 0;
     recomputeAndRender();
     return;
   }

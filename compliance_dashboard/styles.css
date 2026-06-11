@@ -91,10 +91,10 @@ body {
 .topbar {
   border-radius: var(--radius-xl);
   padding: 12px 16px;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .brand-block h1,
@@ -134,10 +134,10 @@ h4 {
 
 .topbar-controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 10px;
-  align-items: end;
+  align-items: center;
   min-width: 0;
 }
 
@@ -152,8 +152,12 @@ h4 {
 .view-tabs,
 .sheet-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+}
+
+.view-tabs {
+  flex-shrink: 0;
 }
 
 .view-tab,
@@ -268,6 +272,7 @@ h4 {
   display: grid;
   gap: 6px;
   min-width: 220px;
+  flex-shrink: 0;
 }
 
 .toolbar-field span {
@@ -1484,7 +1489,13 @@ button:hover {
   }
 
   .topbar-controls {
+    flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .view-tabs,
+  .sheet-tabs {
+    flex-wrap: wrap;
   }
 
   .topbar-icon-group {
