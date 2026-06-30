@@ -33,6 +33,7 @@ Open `http://localhost:3000`.
 Use **Import Excel** in the application header. The importer recognizes these workbook sheets:
 
 - `Calculator`
+- `EU ETS & Fuel EU Calculator`
 - `Parameters`
 - `Fuel_Reference`
 - `Fleet_DB`
@@ -54,6 +55,9 @@ Set these server-side variables:
 WORKBOOK_SYNC_SOURCE_URL=<direct workbook download URL or SharePoint share link>
 WORKBOOK_SYNC_INTERVAL_MS=300000
 WORKBOOK_SYNC_HEADERS_JSON={"Cookie":"<SharePoint or Microsoft 365 auth cookie if required>"}
+WORKBOOK_SYNC_AZURE_TENANT_ID=<optional Entra tenant ID for Graph app sync>
+WORKBOOK_SYNC_AZURE_CLIENT_ID=<optional Entra app client ID for Graph app sync>
+WORKBOOK_SYNC_AZURE_CLIENT_SECRET=<optional Entra app client secret for Graph app sync>
 ```
 
 Notes:
@@ -61,9 +65,11 @@ Notes:
 - `WORKBOOK_SYNC_SOURCE_URL` is required to enable automatic sync.
 - `WORKBOOK_SYNC_INTERVAL_MS` is optional. The default is `300000` (5 minutes).
 - `WORKBOOK_SYNC_HEADERS_JSON` is optional and lets you pass request headers when the workbook source requires authentication.
+- The three `WORKBOOK_SYNC_AZURE_*` variables are optional. When all three are present and `WORKBOOK_SYNC_SOURCE_URL` is a SharePoint share link, the server uses Microsoft Graph application auth and no longer depends on a manually refreshed user session link.
 - The sync layer now understands SharePoint workbook pages. If the source returns SharePoint HTML instead of an `.xlsx` or `.xlsm`, the server will extract the signed `FileGetUrl` bootstrap and then download the workbook automatically.
-- For protected SharePoint links, Railway still needs a valid authenticated request path. The simplest option is a direct signed `FileGetUrl`. The more durable option is a SharePoint share link plus `WORKBOOK_SYNC_HEADERS_JSON` containing the cookies or headers needed for Railway to open that page and extract the signed workbook download.
+- For protected SharePoint links, Railway still needs a valid authenticated request path. The simplest option is a direct signed `FileGetUrl`. The more durable option is Microsoft Graph application auth against the original SharePoint share link. A browser-cookie bootstrap via `WORKBOOK_SYNC_HEADERS_JSON` still works, but it remains session-dependent.
 - If the source redirects to Microsoft login, the workbook sync status will report that access is still required.
+- The dashboard recalculates its summaries from the imported calculator and library sheets. The dashboard output sheets themselves are not copied cell-for-cell because they are derived views, but they refresh automatically after each successful sync.
 
 When enabled, the dashboard header shows workbook-sync status, the sync mode in use, and any temporary access-token expiry that was discovered from SharePoint. It also exposes a `Sync Workbook` button for an immediate manual refresh.
 

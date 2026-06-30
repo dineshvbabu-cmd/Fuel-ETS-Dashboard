@@ -25,7 +25,7 @@ const PARAMETER_DEFINITIONS = [
 ];
 
 const SHEET_ALIASES = {
-  calculatorRows: ["calculator", "voyageinputs", "voyageinput"],
+  calculatorRows: ["calculator", "voyageinputs", "voyageinput", "euetsfueleucalculator", "euetsfuelcalculator"],
   parameters: ["parameters", "parameter"],
   fuelReference: ["fuelreference", "fuelreferences"],
   fleet: ["fleetdb", "fleetdatabase", "fleet"],
@@ -82,6 +82,7 @@ function unwrapCellValue(value) {
 }
 
 function cellValue(worksheet, row, column) {
+  if (!worksheet || !row || !column || column < 1) return null;
   return unwrapCellValue(worksheet.getCell(row, column).value);
 }
 
@@ -163,11 +164,11 @@ function parseCalculator(worksheet) {
     bioFuelConsumptionMt: findColumn(headers, ["Biofuel/RFNBO Cons. (MT)"], 21),
     sustainabilityFactor: findColumn(headers, ["Sustain. Factor WtW (0-1)"], 22),
     windFactor: findColumn(headers, ["WASP Factor (f_wind)"], 23),
-    distanceNm: findColumn(headers, ["Total Distance (nm)"], 24),
-    cargoTonnes: findColumn(headers, ["Cargo Carried (t)"], 25),
-    timeAtSeaHours: findColumn(headers, ["Time at Sea (h)"], 26),
-    berthHours: findColumn(headers, ["Hours at Berth/Anchor"], 27),
-    opsElectricityMj: findColumn(headers, ["OPS Electricity (MJ)"], 28),
+    distanceNm: findColumn(headers, ["Total Distance (nm)"], null),
+    cargoTonnes: findColumn(headers, ["Cargo Carried (t)"], null),
+    timeAtSeaHours: findColumn(headers, ["Time at Sea (h)"], null),
+    berthHours: findColumn(headers, ["Hours at Berth/Anchor"], null),
+    opsElectricityMj: findColumn(headers, ["OPS Electricity (MJ)"], 24),
   };
   const rows = [];
   const warnings = [];

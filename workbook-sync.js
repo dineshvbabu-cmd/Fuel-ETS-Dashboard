@@ -6,6 +6,7 @@ const { loadStateDocument, saveStateDocument } = require("./storage");
 
 const SEED_PATH = path.join(__dirname, "compliance_dashboard", "data", "workbook-seed.json");
 const POLL_INTERVAL_MS = Number(process.env.WORKBOOK_SYNC_INTERVAL_MS || 5 * 60 * 1000);
+const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
 
 const syncState = {
   configured: false,
@@ -243,6 +244,110 @@ function parseHeaders() {
   }
 }
 
+function getGraphAppConfig() {
+  return {
+    tenantId: normalizeText(process.env.WORKBOOK_SYNC_AZURE_TENANT_ID),
+    clientId: normalizeText(process.env.WORKBOOK_SYNC_AZURE_CLIENT_ID),
+    clientSecret: normalizeText(process.env.WORKBOOK_SYNC_AZURE_CLIENT_SECRET),
+  };
+}
+
+function hasGraphAppConfig() {
+  const config = getGraphAppConfig();
+  return Boolean(config.tenantId && config.clientId && config.clientSecret);
+}
+
+function isSharePointShareLink(sourceUrl) {
+  try {
+    const parsed = new URL(sourceUrl);
+    return /sharepoint\.com$/i.test(parsed.hostname) && (/\/:\w:\//i.test(parsed.pathname) || parsed.searchParams.has("e"));
+  } catch {
+    return false;
+  }
+}
+
+function encodeGraphShareUrl(sourceUrl) {
+  return `u!${Buffer.from(sourceUrl, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "")}`;
+}
+
+async function fetchGraphAccessToken() {
+  const config = getGraphAppConfig();
+  const response = await fetch(`https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      scope: GRAPH_SCOPE,
+      grant_type: "client_credentials",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Microsoft Graph token request failed with ${response.status}.`);
+  }
+
+  const payload = await response.json();
+  if (!payload.access_token) {
+    throw new Error("Microsoft Graph token response did not include an access token.");
+  }
+
+  return {
+    accessToken: payload.access_token,
+    expiresAt: payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : "",
+  };
+}
+
+async function downloadWorkbookViaGraphShare(sourceUrl) {
+  const token = await fetchGraphAccessToken();
+  const shareId = encodeGraphShareUrl(sourceUrl);
+  const headers = {
+    Authorization: `Bearer ${token.accessToken}`,
+    Accept: "application/json",
+  };
+
+  const metadataResponse = await fetch(
+    `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,name,webUrl,@microsoft.graph.downloadUrl`,
+    {
+      headers,
+    }
+  );
+  if (!metadataResponse.ok) {
+    throw new Error(`Microsoft Graph share lookup failed with ${metadataResponse.status}.`);
+  }
+
+  const metadata = await metadataResponse.json();
+  const contentResponse = await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/content`, {
+    headers: {
+      Authorization: `Bearer ${token.accessToken}`,
+      Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*",
+    },
+    redirect: "follow",
+  });
+  if (!contentResponse.ok) {
+    throw new Error(`Microsoft Graph workbook download failed with ${contentResponse.status}.`);
+  }
+
+  const arrayBuffer = await contentResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  ensureWorkbookPayload(contentResponse, buffer);
+  return {
+    buffer,
+    finalUrl: contentResponse.url || sourceUrl,
+    resolvedSourceUrl: metadata["@microsoft.graph.downloadUrl"] || contentResponse.url || sourceUrl,
+    authMode: "graph_app",
+    bootstrap: {
+      docUrl: metadata.webUrl || sourceUrl,
+      accessTokenExpiry: token.expiresAt ? new Date(token.expiresAt).getTime() : 0,
+    },
+  };
+}
+
 function isZipWorkbook(buffer) {
   return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
 }
@@ -380,6 +485,10 @@ async function fetchWorkbookResponse(targetUrl, headers, extraHeaders = {}) {
 }
 
 async function downloadWorkbookBuffer(sourceUrl) {
+  if (hasGraphAppConfig() && isSharePointShareLink(sourceUrl)) {
+    return downloadWorkbookViaGraphShare(sourceUrl);
+  }
+
   const headers = {
     Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*",
     ...parseHeaders(),

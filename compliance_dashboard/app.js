@@ -422,7 +422,12 @@ function renderWorkbookSyncStatus() {
   };
   elements.workbookSyncStatus.textContent = labels[status] || "Workbook sync";
   elements.workbookSyncStatus.className = `sync-status sync-${status}`;
-  const modeText = authMode === "sharepoint_bootstrap" ? "SharePoint session bootstrap" : "Direct workbook URL";
+  const modeText =
+    {
+      sharepoint_bootstrap: "SharePoint session bootstrap",
+      graph_app: "Microsoft Graph app sync",
+      direct: "Direct workbook URL",
+    }[authMode] || "Direct workbook URL";
   const resolvedText = resolvedSourceUrl && resolvedSourceUrl !== sourceUrl ? ` - resolved download ${resolvedSourceUrl}` : "";
   const expiresText = accessTokenExpiresAt ? ` - access expires ${new Date(accessTokenExpiresAt).toLocaleString()}` : "";
   elements.workbookSyncStatus.title =
