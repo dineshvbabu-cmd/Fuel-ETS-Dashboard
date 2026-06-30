@@ -48,6 +48,70 @@ const SECTION_LABELS = {
   formulaGuide: "Formula Guide",
 };
 
+const COLUMN_DEFINITIONS = {
+  fuelReference: [
+    { key: "fuelPathway", aliases: ["Fuel Pathway"], type: "text" },
+    { key: "fuelClass", aliases: ["Class"], type: "text" },
+    { key: "lcvMjPerG", aliases: ["LCV (MJ/g)"], type: "number" },
+    { key: "wtWPerMj", aliases: ["WtT (gCO2eq/MJ)", "WtT (gCO₂eq/MJ)"], type: "number" },
+    { key: "ttwCo2eqPerG", aliases: ["TtW CO2eq (gCO2eq/gFuel)", "TtW CO₂eq (gCO₂eq/gFuel)"], type: "number" },
+    { key: "wtwIntensity", aliases: ["WtW intensity (gCO2eq/MJ)", "WtW intensity (gCO₂eq/MJ)"], type: "number" },
+    { key: "rwd", aliases: ["RWD (RFNBO reward)"], type: "number" },
+    { key: "etsCo2Cf", aliases: ["ETS CO2 Cf (tCO2/t)", "ETS CO₂ Cf (tCO₂/t)"], type: "number" },
+    { key: "notes", aliases: ["Notes"], type: "text" },
+    { key: "etsTtwAr5", aliases: ["ETS TtW CO2eq AR5 (gCO2eq/gFuel)", "ETS TtW CO₂eq AR5 (gCO₂eq/gFuel)"], type: "number" },
+    { key: "etsNonCo2Ar5", aliases: ["ETS non-CO2 TtW AR5 (gCO2eq/gFuel)", "ETS non-CO₂ TtW AR5 (gCO₂eq/gFuel)"], type: "number" },
+    { key: "cfCo2PerG", aliases: ["Cf CO2 (g/gFuel)", "Cf CO₂ (g/gFuel)"], type: "number" },
+    { key: "cfCh4PerG", aliases: ["Cf CH4 (g/gFuel)", "Cf CH₄ (g/gFuel)"], type: "number" },
+    { key: "cfN2oPerG", aliases: ["Cf N2O (g/gFuel)", "Cf N₂O (g/gFuel)"], type: "number" },
+    { key: "cslipPercent", aliases: ["Cslip (% mass)"], type: "number" },
+    { key: "consumerSource", aliases: ["Fuel consumer / source (Annex II)"], type: "text" },
+  ],
+  fleet: [
+    { key: "imoNo", aliases: ["IMO No."], type: "number" },
+    { key: "vesselName", aliases: ["Vessel Name"], type: "text" },
+    { key: "shipType", aliases: ["Ship Type"], type: "text" },
+    { key: "flag", aliases: ["Flag"], type: "text" },
+    { key: "className", aliases: ["Class"], type: "text" },
+    { key: "gt", aliases: ["GT (GRT)"], type: "number" },
+    { key: "nt", aliases: ["NT (NRT)"], type: "number" },
+    { key: "summerDwt", aliases: ["Summer DWT"], type: "number" },
+    { key: "built", aliases: ["Built"], type: "number" },
+    { key: "wapsFwindFactor", aliases: ["WAPS Fwind factor", "WAPS Fwind"], type: "number" },
+  ],
+  ports: [
+    { key: "unlocode", aliases: ["UN/LOCODE"], type: "text" },
+    { key: "portName", aliases: ["Port Name"], type: "text" },
+    { key: "country", aliases: ["Country"], type: "text" },
+    { key: "countryCode", aliases: ["Country Code"], type: "text" },
+    { key: "euEeaInScope", aliases: ["EU/EEA In-Scope"], type: "text" },
+    { key: "outermostRegion", aliases: ["Outermost Region"], type: "text" },
+    { key: "specialCategory", aliases: ["Special Category", "Small Islands"], type: "text" },
+  ],
+  flags: [
+    { key: "flagState", aliases: ["Flag State"], type: "text" },
+    { key: "iso", aliases: ["ISO"], type: "text" },
+    { key: "registryType", aliases: ["Registry Type"], type: "text" },
+    { key: "euEeaFlag", aliases: ["EU/EEA Flag"], type: "text" },
+    { key: "notes", aliases: ["Notes"], type: "text" },
+  ],
+  derogations: [
+    { key: "serialNo", aliases: ["#", "S.No"], type: "number" },
+    { key: "derogationRule", aliases: ["Derogation / Rule"], type: "text" },
+    { key: "regime", aliases: ["Regime"], type: "text" },
+    { key: "whatItCovers", aliases: ["What it covers"], type: "text" },
+    { key: "conditionsEligibility", aliases: ["Conditions / Eligibility"], type: "text" },
+    { key: "effect", aliases: ["Effect"], type: "text" },
+    { key: "expires", aliases: ["Expires"], type: "date" },
+    { key: "legalBasis", aliases: ["Legal basis"], type: "text" },
+  ],
+  formulaGuide: [
+    { key: "stepField", aliases: ["Step / Field"], type: "text" },
+    { key: "resultColumn", aliases: ["Result column"], type: "text" },
+    { key: "formulaPlainEnglish", aliases: ["Formula (plain English)"], type: "text" },
+  ],
+};
+
 const SUBSCRIPT_MAP = {
   "₀": "0",
   "₁": "1",
@@ -115,6 +179,129 @@ function dateValue(value) {
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function portableValue(value) {
+  const unwrapped = unwrapCellValue(value);
+  if (unwrapped === null || unwrapped === undefined || unwrapped === "") return "";
+  if (unwrapped instanceof Date) return dateValue(unwrapped);
+  if (typeof unwrapped === "number" || typeof unwrapped === "boolean") return unwrapped;
+  return textValue(unwrapped);
+}
+
+function uniqueColumnKey(baseKey, usedKeys) {
+  let key = baseKey || "column";
+  let suffix = 2;
+  while (usedKeys.has(key)) {
+    key = `${baseKey || "column"}_${suffix}`;
+    suffix += 1;
+  }
+  usedKeys.add(key);
+  return key;
+}
+
+function findMatchingDefinition(headerText, definitions = []) {
+  const rawHeader = textValue(headerText);
+  const normalizedHeader = normalizeName(headerText);
+  return (
+    definitions.find((definition) =>
+      (definition.aliases || []).some((alias) => {
+        const rawAlias = textValue(alias);
+        if (rawAlias && rawAlias === rawHeader) return true;
+        const normalizedAlias = normalizeName(alias);
+        return normalizedAlias && normalizedHeader === normalizedAlias;
+      })
+    ) || null
+  );
+}
+
+function inferColumnType(values) {
+  const nonEmpty = values.filter((value) => value !== null && value !== undefined && value !== "");
+  if (!nonEmpty.length) return "text";
+  if (nonEmpty.every((value) => typeof value === "number")) return "number";
+  if (nonEmpty.every((value) => typeof value === "boolean")) return "boolean";
+  if (nonEmpty.every((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))) return "date";
+  return "text";
+}
+
+function buildDynamicColumns(worksheet, headerRow, sectionKey) {
+  const definitions = COLUMN_DEFINITIONS[sectionKey] || [];
+  const usedKeys = new Set(["id"]);
+  const columns = [];
+
+  for (let columnNumber = 1; columnNumber <= worksheet.columnCount; columnNumber += 1) {
+    const label = textValue(cellValue(worksheet, headerRow, columnNumber));
+    if (!label) continue;
+    const definition = findMatchingDefinition(label, definitions);
+    const key = uniqueColumnKey(definition?.key || normalizeName(label), usedKeys);
+    columns.push({
+      key,
+      label,
+      type: definition?.type || "auto",
+      sourceColumn: columnNumber,
+    });
+  }
+
+  return columns;
+}
+
+function parseDynamicTable(worksheet, { sectionKey, headerRow, dataStartRow, idPrefix }) {
+  const columns = buildDynamicColumns(worksheet, headerRow, sectionKey);
+  const rows = [];
+  const warnings = [];
+
+  for (let rowNumber = dataStartRow; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = { id: makeId(idPrefix, rows.length) };
+    let hasData = false;
+
+    columns.forEach((column) => {
+      const rawValue = cellValue(worksheet, rowNumber, column.sourceColumn);
+      let value;
+      if (column.type === "number") {
+        value = numberValue(rawValue);
+      } else if (column.type === "date") {
+        value = dateValue(rawValue);
+      } else {
+        value = portableValue(rawValue);
+      }
+      if (value !== null && value !== undefined && value !== "") {
+        hasData = true;
+      }
+      row[column.key] = value;
+    });
+
+    if (!hasData) continue;
+    rows.push(row);
+  }
+
+  const finalizedColumns = columns.map((column) => ({
+    key: column.key,
+    label: column.label,
+    type: column.type === "auto" ? inferColumnType(rows.map((row) => row[column.key])) : column.type,
+  }));
+
+  return { rows, warnings, columns: finalizedColumns };
+}
+
+function findHeaderRowByAliases(worksheet, aliases, maxRow = 12) {
+  let bestRow = 1;
+  let bestScore = -1;
+  for (let rowNumber = 1; rowNumber <= Math.min(maxRow, worksheet.rowCount); rowNumber += 1) {
+    let score = 0;
+    for (let columnNumber = 1; columnNumber <= worksheet.columnCount; columnNumber += 1) {
+      const label = textValue(cellValue(worksheet, rowNumber, columnNumber));
+      if (!label) continue;
+      const normalized = normalizeName(label);
+      if (aliases.some((alias) => normalized === normalizeName(alias) || normalized.includes(normalizeName(alias)))) {
+        score += 1;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = rowNumber;
+    }
+  }
+  return bestRow;
 }
 
 function makeId(prefix, index) {
@@ -244,111 +431,65 @@ function parseParameters(worksheet) {
     editable: definition.editable,
     type: definition.type,
   })).filter((row) => row.label || row.value !== null);
-  return { rows, warnings: [] };
+  return {
+    rows,
+    warnings: [],
+    columns: [
+      { key: "section", label: "Section", type: "text" },
+      { key: "key", label: "Key", type: "text" },
+      { key: "label", label: "Label", type: "text" },
+      { key: "value", label: "Value", type: "text" },
+      { key: "note", label: "Note", type: "text" },
+      { key: "editable", label: "Editable", type: "boolean" },
+      { key: "type", label: "Type", type: "text" },
+    ],
+  };
 }
 
 function parseFuelReference(worksheet) {
-  const rows = [];
-  for (let rowNumber = 5; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const fuelPathway = textValue(cellValue(worksheet, rowNumber, 1));
-    if (!fuelPathway) continue;
-    rows.push({
-      id: makeId("fuel-import", rows.length),
-      fuelPathway,
-      fuelClass: textValue(cellValue(worksheet, rowNumber, 2)),
-      lcvMjPerG: numberValue(cellValue(worksheet, rowNumber, 3)) || 0,
-      wtWPerMj: numberValue(cellValue(worksheet, rowNumber, 4)) || 0,
-      rwd: numberValue(cellValue(worksheet, rowNumber, 7)) || 1,
-      etsCo2Cf: numberValue(cellValue(worksheet, rowNumber, 8)) || 0,
-      notes: textValue(cellValue(worksheet, rowNumber, 9)),
-      alias: textValue(cellValue(worksheet, rowNumber, 11)) || "(none)",
-      cfCo2PerG: numberValue(cellValue(worksheet, rowNumber, 13)) || 0,
-      cfCh4PerG: numberValue(cellValue(worksheet, rowNumber, 14)) || 0,
-      cfN2oPerG: numberValue(cellValue(worksheet, rowNumber, 15)) || 0,
-      cslipPercent: numberValue(cellValue(worksheet, rowNumber, 16)) || 0,
-      consumerSource: textValue(cellValue(worksheet, rowNumber, 17)),
-    });
-  }
-  return { rows, warnings: [] };
+  return parseDynamicTable(worksheet, {
+    sectionKey: "fuelReference",
+    headerRow: 4,
+    dataStartRow: 5,
+    idPrefix: "fuel-import",
+  });
 }
 
 function parseFleet(worksheet) {
-  const headers = headerMap(worksheet, 4);
-  const wapsColumn = findColumn(headers, ["WAPS Fwind factor", "WASP Factor"], 10);
-  const rows = [];
-  for (let rowNumber = 5; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const imoNo = numberValue(cellValue(worksheet, rowNumber, 1));
-    const vesselName = textValue(cellValue(worksheet, rowNumber, 2));
-    if (!imoNo && !vesselName) continue;
-    rows.push({
-      id: makeId("fleet-import", rows.length),
-      imoNo,
-      vesselName,
-      shipType: textValue(cellValue(worksheet, rowNumber, 3)),
-      flag: textValue(cellValue(worksheet, rowNumber, 4)),
-      className: textValue(cellValue(worksheet, rowNumber, 5)),
-      gt: numberValue(cellValue(worksheet, rowNumber, 6)) || 0,
-      nt: numberValue(cellValue(worksheet, rowNumber, 7)) || 0,
-      summerDwt: numberValue(cellValue(worksheet, rowNumber, 8)) || 0,
-      built: numberValue(cellValue(worksheet, rowNumber, 9)),
-      wapsFwindFactor: numberValue(cellValue(worksheet, rowNumber, wapsColumn)),
-    });
-  }
-  return { rows, warnings: [] };
+  return parseDynamicTable(worksheet, {
+    sectionKey: "fleet",
+    headerRow: 4,
+    dataStartRow: 5,
+    idPrefix: "fleet-import",
+  });
 }
 
 function parsePorts(worksheet) {
-  const rows = [];
-  for (let rowNumber = 5; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const unlocode = textValue(cellValue(worksheet, rowNumber, 1)).toUpperCase();
-    if (!unlocode) continue;
-    rows.push({
-      id: makeId("port-import", rows.length),
-      unlocode,
-      portName: textValue(cellValue(worksheet, rowNumber, 2)),
-      country: textValue(cellValue(worksheet, rowNumber, 3)),
-      countryCode: textValue(cellValue(worksheet, rowNumber, 4)),
-      euEeaInScope: textValue(cellValue(worksheet, rowNumber, 5)),
-      outermostRegion: textValue(cellValue(worksheet, rowNumber, 6)),
-      specialCategory: textValue(cellValue(worksheet, rowNumber, 7)),
-    });
-  }
-  return { rows, warnings: [] };
+  return parseDynamicTable(worksheet, {
+    sectionKey: "ports",
+    headerRow: 4,
+    dataStartRow: 5,
+    idPrefix: "port-import",
+  });
 }
 
 function parseFlags(worksheet) {
-  const rows = [];
-  for (let rowNumber = 5; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const flagState = textValue(cellValue(worksheet, rowNumber, 1));
-    if (!flagState) continue;
-    rows.push({
-      id: makeId("flag-import", rows.length),
-      flagState,
-      iso: textValue(cellValue(worksheet, rowNumber, 2)),
-      registryType: textValue(cellValue(worksheet, rowNumber, 3)),
-      euEeaFlag: textValue(cellValue(worksheet, rowNumber, 4)),
-      notes: textValue(cellValue(worksheet, rowNumber, 5)),
-    });
-  }
-  return { rows, warnings: [] };
+  return parseDynamicTable(worksheet, {
+    sectionKey: "flags",
+    headerRow: 4,
+    dataStartRow: 5,
+    idPrefix: "flag-import",
+  });
 }
 
 function parseDerogations(worksheet) {
-  const rows = [];
-  for (let rowNumber = 8; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const unlocode = textValue(cellValue(worksheet, rowNumber, 5)).toUpperCase();
-    const region = textValue(cellValue(worksheet, rowNumber, 3));
-    if (!unlocode && !region) continue;
-    rows.push({
-      id: makeId("derogation-import", rows.length),
-      serialNo: numberValue(cellValue(worksheet, rowNumber, 1)) || rows.length + 1,
-      euMemberState: textValue(cellValue(worksheet, rowNumber, 2)),
-      outermostRegion: region,
-      omrPortName: textValue(cellValue(worksheet, rowNumber, 4)),
-      unlocode,
-    });
-  }
-  return { rows, warnings: [] };
+  const headerRow = findHeaderRowByAliases(worksheet, ["Derogation / Rule", "Regime", "Effect", "Legal basis"]);
+  return parseDynamicTable(worksheet, {
+    sectionKey: "derogations",
+    headerRow,
+    dataStartRow: headerRow + 1,
+    idPrefix: "derogation-import",
+  });
 }
 
 function parseMethodology(worksheet) {
@@ -358,22 +499,20 @@ function parseMethodology(worksheet) {
     if (!detail) continue;
     rows.push({ id: makeId("methodology-import", rows.length), detail });
   }
-  return { rows, warnings: [] };
+  return {
+    rows,
+    warnings: [],
+    columns: [{ key: "detail", label: "Detail", type: "text" }],
+  };
 }
 
 function parseFormulaGuide(worksheet) {
-  const rows = [];
-  for (let rowNumber = 4; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-    const stepField = textValue(cellValue(worksheet, rowNumber, 1));
-    if (!stepField) continue;
-    rows.push({
-      id: makeId("formula-import", rows.length),
-      stepField,
-      resultColumn: textValue(cellValue(worksheet, rowNumber, 2)),
-      formulaPlainEnglish: textValue(cellValue(worksheet, rowNumber, 3)),
-    });
-  }
-  return { rows, warnings: [] };
+  return parseDynamicTable(worksheet, {
+    sectionKey: "formulaGuide",
+    headerRow: 3,
+    dataStartRow: 4,
+    idPrefix: "formula-import",
+  });
 }
 
 const PARSERS = {
@@ -419,6 +558,7 @@ async function parseComplianceWorkbook(buffer, fileName = "workbook.xlsx") {
       label: SECTION_LABELS[sectionKey],
       sourceSheet: worksheet.name,
       rowCount: parsed.rows.length,
+      columns: parsed.columns || [],
       rows: parsed.rows,
       warnings: parsed.warnings,
     };

@@ -3,21 +3,20 @@ import {
   SHEETS,
   SHEET_COLUMNS,
   blankCalculatorRow,
-  blankRowForSheet,
   createStateFromSeed,
   deepClone,
   normalizeText,
   numberOrZero,
   persistableState,
   recalculateWorkbook,
-} from "./engine.js?v=2026.06.30.1";
+} from "./engine.js?v=2026.06.30.2";
 
 const LIBRARY_PAGE_SIZE = 100;
 const CALCULATOR_HISTORY_PAGE_SIZE = 100;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REMOTE_SAVE_DELAY_MS = 700;
 const WORKBOOK_SYNC_POLL_MS = 60_000;
-const APP_BUILD = "2026.06.30.1";
+const APP_BUILD = "2026.06.30.2";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -280,6 +279,19 @@ const LIBRARY_COLUMN_LABELS = {
     wapsFwindFactor: "WAPS Fwind factor",
   },
 };
+
+const DEFAULT_LIBRARY_SCHEMAS = Object.fromEntries(
+  Object.entries(SHEET_COLUMNS).map(([sheetKey, columns]) => [
+    sheetKey,
+    {
+      columns: columns.map((column) => ({
+        key: column,
+        label: LIBRARY_COLUMN_LABELS[sheetKey]?.[column] || column,
+        type: numericColumns[sheetKey]?.has(column) ? "number" : "text",
+      })),
+    },
+  ])
+);
 
 const CALCULATOR_HISTORY_COLUMNS = [
   { key: "recordId", label: "ID" },
@@ -2887,16 +2899,24 @@ function renderLibraryTabs() {
 }
 
 function getLibraryDisplayColumns(sheetKey) {
-  return LIBRARY_DISPLAY_COLUMNS[sheetKey] || SHEET_COLUMNS[sheetKey] || [];
+  const schemaColumns = getLibrarySchemaColumns(sheetKey).map((column) => column.key);
+  const preferredColumns = LIBRARY_DISPLAY_COLUMNS[sheetKey] || schemaColumns;
+  return [
+    ...preferredColumns.filter((column) => schemaColumns.includes(column) || getSheetRowsForDisplay(sheetKey).some((row) => column in row)),
+    ...schemaColumns.filter((column) => !preferredColumns.includes(column)),
+  ];
 }
 
 function getLibraryColumnLabel(sheetKey, column) {
-  return LIBRARY_COLUMN_LABELS[sheetKey]?.[column] || column;
+  return getLibraryColumnMeta(sheetKey, column)?.label || LIBRARY_COLUMN_LABELS[sheetKey]?.[column] || column;
 }
 
 function formatLibraryValue(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
   }
   if (typeof value === "number") {
     if (Number.isInteger(value)) {
@@ -2905,6 +2925,34 @@ function formatLibraryValue(value) {
     return formatNumber(value, Math.abs(value) < 10 ? 4 : 2);
   }
   return value;
+}
+
+function getLibrarySchema(sheetKey) {
+  return stateStore.state?.meta?.librarySchemas?.[sheetKey] || DEFAULT_LIBRARY_SCHEMAS[sheetKey] || { columns: [] };
+}
+
+function getLibrarySchemaColumns(sheetKey) {
+  return getLibrarySchema(sheetKey).columns || [];
+}
+
+function getLibraryColumnMeta(sheetKey, columnKey) {
+  return getLibrarySchemaColumns(sheetKey).find((column) => column.key === columnKey) || null;
+}
+
+function createBlankLibraryRow(sheetKey) {
+  const row = { id: `${sheetKey}-${Date.now()}` };
+  getLibrarySchemaColumns(sheetKey).forEach((column) => {
+    row[column.key] = column.type === "boolean" ? false : "";
+  });
+  if (sheetKey === "parameters") {
+    row.editable = true;
+    row.type = "text";
+  }
+  if (sheetKey === "fuelReference") {
+    if ("fuelClass" in row) row.fuelClass = "Fossil";
+    if ("rwd" in row) row.rwd = 1;
+  }
+  return row;
 }
 
 function renderLibraryContent() {
@@ -3481,11 +3529,24 @@ function applyWorkbookImport() {
         stateStore.state[key] = deepClone(preview.sections[key].rows);
       });
 
+    const nextLibrarySchemas = {
+      ...(stateStore.state.meta?.librarySchemas || {}),
+    };
+    selectedKeys
+      .filter((key) => key !== "calculatorRows" && Array.isArray(preview.sections[key].columns) && preview.sections[key].columns.length)
+      .forEach((key) => {
+        nextLibrarySchemas[key] = {
+          columns: deepClone(preview.sections[key].columns),
+          sourceSheet: preview.sections[key].sourceSheet,
+        };
+      });
+
     stateStore.state.meta = {
       ...(stateStore.state.meta || {}),
       sourceWorkbook: preview.fileName,
       importedAt: preview.importedAt,
       importedSheets: selectedKeys.map((key) => preview.sections[key].sourceSheet),
+      librarySchemas: nextLibrarySchemas,
     };
     stateStore.ui.vesselFilter = "all";
     stateStore.ui.activeView = "dashboard";
@@ -3727,7 +3788,7 @@ function updateCalculatorCell(rowId, field, rawValue, commit = true, context = "
 
 function openEditorDialog(sheetKey, rowId) {
   const rows = getCollection(sheetKey);
-  const row = rowId ? rows.find((item) => item.id === rowId) : blankRowForSheet(sheetKey);
+  const row = rowId ? rows.find((item) => item.id === rowId) : createBlankLibraryRow(sheetKey);
   stateStore.ui.dialog = {
     sheetKey,
     rowId: rowId || null,
@@ -3741,24 +3802,30 @@ function renderEditorDialog() {
   const dialogState = stateStore.ui.dialog;
   if (!dialogState) return;
   const { sheetKey, draft } = dialogState;
-  const columns = SHEET_COLUMNS[sheetKey];
+  const columns = getLibrarySchemaColumns(sheetKey);
   elements.editorDialogTitle.textContent = `${dialogState.rowId ? "Edit" : "Add"} ${sheetKey} row`;
   elements.editorDialogBody.innerHTML = columns
     .map((column) => {
-      const value = draft[column] ?? "";
-      const multiline = column.toLowerCase().includes("note") || column.toLowerCase().includes("detail") || column.toLowerCase().includes("formula");
-      const selectOptions = EDITOR_SELECT_OPTIONS[sheetKey]?.[column];
+      const value = draft[column.key] ?? "";
+      const multiline =
+        column.key.toLowerCase().includes("note") ||
+        column.key.toLowerCase().includes("detail") ||
+        column.key.toLowerCase().includes("formula") ||
+        column.label.toLowerCase().includes("note");
+      const selectOptions = EDITOR_SELECT_OPTIONS[sheetKey]?.[column.key];
       const inputType =
-        numericColumns[sheetKey]?.has(column) || (sheetKey === "parameters" && column === "value" && draft.type === "number")
+        column.type === "number" || (sheetKey === "parameters" && column.key === "value" && draft.type === "number")
           ? "number"
+          : column.type === "date"
+            ? "date"
           : "text";
       return `
         <div class="editor-field">
-          <label for="editor-${column}">${column}</label>
+          <label for="editor-${column.key}">${column.label}</label>
           ${
             selectOptions
               ? `
-                <select class="editor-input" id="editor-${column}" data-editor-field="${column}">
+                <select class="editor-input" id="editor-${column.key}" data-editor-field="${column.key}">
                   ${selectOptions
                     .map(
                       (option) =>
@@ -3768,8 +3835,8 @@ function renderEditorDialog() {
                 </select>
               `
               : multiline
-              ? `<textarea class="editor-textarea" id="editor-${column}" data-editor-field="${column}">${value}</textarea>`
-              : `<input class="editor-input" id="editor-${column}" type="${inputType}" data-editor-field="${column}" value="${value}">`
+              ? `<textarea class="editor-textarea" id="editor-${column.key}" data-editor-field="${column.key}">${value}</textarea>`
+              : `<input class="editor-input" id="editor-${column.key}" type="${inputType}" data-editor-field="${column.key}" value="${value}">`
           }
         </div>
       `;
@@ -3782,19 +3849,19 @@ function saveEditorDialog() {
   if (!dialogState) return;
   const { sheetKey, rowId } = dialogState;
   const rows = getCollection(sheetKey);
-  const columns = SHEET_COLUMNS[sheetKey];
-  const draft = { ...(rowId ? rows.find((item) => item.id === rowId) : blankRowForSheet(sheetKey)) };
+  const columns = getLibrarySchemaColumns(sheetKey);
+  const draft = { ...(rowId ? rows.find((item) => item.id === rowId) : createBlankLibraryRow(sheetKey)) };
 
   columns.forEach((column) => {
-    const field = elements.editorDialogBody.querySelector(`[data-editor-field="${column}"]`);
+    const field = elements.editorDialogBody.querySelector(`[data-editor-field="${column.key}"]`);
     if (!field) return;
     const rawValue = field.value;
-    if (numericColumns[sheetKey]?.has(column) || (sheetKey === "parameters" && column === "value" && draft.type === "number")) {
-      draft[column] = rawValue === "" ? "" : Number(rawValue);
-    } else if (sheetKey === "parameters" && column === "editable") {
-      draft[column] = /^true$/i.test(rawValue);
+    if (column.type === "number" || (sheetKey === "parameters" && column.key === "value" && draft.type === "number")) {
+      draft[column.key] = rawValue === "" ? "" : Number(rawValue);
+    } else if (column.type === "boolean" || (sheetKey === "parameters" && column.key === "editable")) {
+      draft[column.key] = /^true$/i.test(rawValue);
     } else {
-      draft[column] = rawValue;
+      draft[column.key] = rawValue;
     }
   });
 

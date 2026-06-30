@@ -535,14 +535,24 @@ async function downloadWorkbookBuffer(sourceUrl) {
 function applyWorkbookSections(baseState, preview, sourceUrl) {
   const nextState = deepClone(baseState);
   const sectionKeys = Object.keys(preview.sections);
+  const nextLibrarySchemas = {
+    ...(nextState.meta?.librarySchemas || {}),
+  };
   sectionKeys.forEach((key) => {
     nextState[key] = deepClone(preview.sections[key].rows);
+    if (key !== "calculatorRows" && Array.isArray(preview.sections[key].columns) && preview.sections[key].columns.length) {
+      nextLibrarySchemas[key] = {
+        columns: deepClone(preview.sections[key].columns),
+        sourceSheet: preview.sections[key].sourceSheet,
+      };
+    }
   });
   nextState.meta = {
     ...(nextState.meta || {}),
     sourceWorkbook: preview.fileName,
     importedAt: preview.importedAt,
     importedSheets: sectionKeys.map((key) => preview.sections[key].sourceSheet),
+    librarySchemas: nextLibrarySchemas,
     workbookSync: {
       sourceUrl,
       lastWorkbookFileName: preview.fileName,

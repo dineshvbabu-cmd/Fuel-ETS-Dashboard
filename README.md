@@ -12,6 +12,7 @@ This project turns the workbook `EU_ETS_FuelEU_Compliance_Calculator_10_1_1.xlsx
 - Bulk `.xlsx` and `.xlsm` imports for Voyage Inputs and matching reference-library sheets
 - Optional remote workbook sync from a configured workbook URL
 - Editable reference sheets for parameters, fuel factors, fleet, ports, flags, derogations, methodology, and formula guide
+- Workbook-driven library schemas so newly added library columns appear automatically after import or sync
 - A JavaScript calculation engine that mirrors the workbook logic for:
   - EU ETS scope and allowance exposure
   - FuelEU attained intensity
