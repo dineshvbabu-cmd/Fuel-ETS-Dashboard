@@ -51,7 +51,7 @@ The server can poll a configured workbook URL and apply any changed workbook she
 Set these server-side variables:
 
 ```text
-WORKBOOK_SYNC_SOURCE_URL=<direct workbook download URL>
+WORKBOOK_SYNC_SOURCE_URL=<direct workbook download URL or SharePoint share link>
 WORKBOOK_SYNC_INTERVAL_MS=300000
 WORKBOOK_SYNC_HEADERS_JSON={"Cookie":"<SharePoint or Microsoft 365 auth cookie if required>"}
 ```
@@ -61,9 +61,11 @@ Notes:
 - `WORKBOOK_SYNC_SOURCE_URL` is required to enable automatic sync.
 - `WORKBOOK_SYNC_INTERVAL_MS` is optional. The default is `300000` (5 minutes).
 - `WORKBOOK_SYNC_HEADERS_JSON` is optional and lets you pass request headers when the workbook source requires authentication.
-- For protected SharePoint links, Railway must be able to fetch the workbook with the supplied URL and headers. If the URL redirects to Microsoft login, the workbook sync status will report that access is still required.
+- The sync layer now understands SharePoint workbook pages. If the source returns SharePoint HTML instead of an `.xlsx` or `.xlsm`, the server will extract the signed `FileGetUrl` bootstrap and then download the workbook automatically.
+- For protected SharePoint links, Railway still needs a valid authenticated request path. The simplest option is a direct signed `FileGetUrl`. The more durable option is a SharePoint share link plus `WORKBOOK_SYNC_HEADERS_JSON` containing the cookies or headers needed for Railway to open that page and extract the signed workbook download.
+- If the source redirects to Microsoft login, the workbook sync status will report that access is still required.
 
-When enabled, the dashboard header shows workbook-sync status and exposes a `Sync Workbook` button for an immediate manual refresh.
+When enabled, the dashboard header shows workbook-sync status, the sync mode in use, and any temporary access-token expiry that was discovered from SharePoint. It also exposes a `Sync Workbook` button for an immediate manual refresh.
 
 ## Regenerate the workbook seed
 

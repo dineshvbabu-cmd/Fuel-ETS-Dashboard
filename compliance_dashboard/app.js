@@ -400,7 +400,18 @@ function renderSyncStatus() {
 
 function renderWorkbookSyncStatus() {
   if (!elements.workbookSyncStatus || !elements.syncWorkbookButton) return;
-  const { configured, status, running, lastSuccessAt, lastError, lastWarnings, sourceUrl } = stateStore.workbookSync;
+  const {
+    configured,
+    status,
+    running,
+    lastSuccessAt,
+    lastError,
+    lastWarnings,
+    sourceUrl,
+    resolvedSourceUrl,
+    authMode,
+    accessTokenExpiresAt,
+  } = stateStore.workbookSync;
   const labels = {
     disabled: "Workbook sync off",
     idle: "Workbook sync ready",
@@ -411,10 +422,17 @@ function renderWorkbookSyncStatus() {
   };
   elements.workbookSyncStatus.textContent = labels[status] || "Workbook sync";
   elements.workbookSyncStatus.className = `sync-status sync-${status}`;
+  const modeText = authMode === "sharepoint_bootstrap" ? "SharePoint session bootstrap" : "Direct workbook URL";
+  const resolvedText = resolvedSourceUrl && resolvedSourceUrl !== sourceUrl ? ` - resolved download ${resolvedSourceUrl}` : "";
+  const expiresText = accessTokenExpiresAt ? ` - access expires ${new Date(accessTokenExpiresAt).toLocaleString()}` : "";
   elements.workbookSyncStatus.title =
     status === "error"
       ? lastError || "Workbook sync failed."
-      : `${configured ? `Source: ${sourceUrl || "configured"}` : "Configure WORKBOOK_SYNC_SOURCE_URL to enable workbook sync."}${
+      : `${configured ? `Source: ${sourceUrl || "configured"} - ${modeText}` : "Configure WORKBOOK_SYNC_SOURCE_URL to enable workbook sync."}${
+          resolvedText
+        }${
+          expiresText
+        }${
           lastSuccessAt ? ` - last success ${new Date(lastSuccessAt).toLocaleString()}` : ""
         }${lastWarnings?.length ? ` - ${lastWarnings.length} warning(s)` : ""}`;
   elements.syncWorkbookButton.disabled = !configured || running;
@@ -428,10 +446,13 @@ function applyWorkbookSyncPayload(payload) {
     status: payload?.status || (payload?.configured ? "idle" : "disabled"),
     running: Boolean(payload?.running),
     sourceUrl: payload?.sourceUrl || "",
+    resolvedSourceUrl: payload?.resolvedSourceUrl || "",
     lastSuccessAt: payload?.lastSuccessAt || "",
     lastError: payload?.lastError || "",
     lastWarnings: payload?.lastWarnings || [],
     documentRevision: payload?.documentRevision || "",
+    authMode: payload?.authMode || "",
+    accessTokenExpiresAt: payload?.accessTokenExpiresAt || "",
   };
   renderWorkbookSyncStatus();
 }

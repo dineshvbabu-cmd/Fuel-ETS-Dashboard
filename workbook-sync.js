@@ -11,6 +11,7 @@ const syncState = {
   configured: false,
   enabled: false,
   sourceUrl: "",
+  resolvedSourceUrl: "",
   status: "disabled",
   running: false,
   startedAt: "",
@@ -23,6 +24,9 @@ const syncState = {
   workbookFileName: "",
   appliedSections: [],
   documentRevision: "",
+  authMode: "",
+  sourceDocumentUrl: "",
+  accessTokenExpiresAt: "",
   pollIntervalMs: POLL_INTERVAL_MS,
 };
 
@@ -60,6 +64,13 @@ function dateToInputValue(value) {
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function epochMsToIso(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  const date = new Date(numeric);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
 function normalizeParameter(row, index) {
@@ -232,11 +243,116 @@ function parseHeaders() {
   }
 }
 
+function isZipWorkbook(buffer) {
+  return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+}
+
+function htmlDecode(value) {
+  return String(value ?? "")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function extractAssignedJsonObject(html, variableName) {
+  const marker = `${variableName} =`;
+  const markerIndex = html.indexOf(marker);
+  if (markerIndex === -1) return null;
+
+  const startIndex = html.indexOf("{", markerIndex);
+  if (startIndex === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < html.length; index += 1) {
+    const character = html[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(startIndex, index + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractHiddenInputValue(html, name) {
+  const pattern = new RegExp(`name=["']${name}["'][^>]*value=["']([^"']+)["']`, "i");
+  const match = html.match(pattern);
+  return match ? htmlDecode(match[1]) : "";
+}
+
+function extractObjectStringProperty(html, objectName, propertyName) {
+  const pattern = new RegExp(`${objectName}[\\s\\S]*?${propertyName}\\s*:\\s*'([^']+)'`, "i");
+  const match = html.match(pattern);
+  return match ? htmlDecode(match[1]) : "";
+}
+
+function extractObjectNumberProperty(html, objectName, propertyName) {
+  const pattern = new RegExp(`${objectName}[\\s\\S]*?${propertyName}\\s*:\\s*(\\d+)`, "i");
+  const match = html.match(pattern);
+  return match ? Number(match[1]) : 0;
+}
+
+function extractSharePointBootstrap(html) {
+  const context = extractAssignedJsonObject(html, "_wopiContextJson");
+  if (!context) return null;
+
+  const fileGetUrl = context.FileGetUrl || extractHiddenInputValue(html, "filegeturl");
+  if (!fileGetUrl) return null;
+
+  const accessToken =
+    extractHiddenInputValue(html, "access_token") ||
+    extractObjectStringProperty(html, "wopiAuthInfo", "AccessToken");
+  const accessTokenExpiry =
+    Number(extractHiddenInputValue(html, "access_token_ttl")) ||
+    extractObjectNumberProperty(html, "wopiAuthInfo", "AccessTokenExpiry");
+
+  return {
+    fileGetUrl,
+    fileName: context.FileName || "",
+    docUrl: context.DocUrl || "",
+    wopiSrc:
+      extractObjectStringProperty(html, "wopiAuthInfo", "WopiSrc") ||
+      context.WebAppUrl ||
+      "",
+    accessToken,
+    accessTokenExpiry,
+  };
+}
+
 function ensureWorkbookPayload(response, buffer) {
   const finalUrl = response.url || "";
   const contentType = normalizeText(response.headers.get("content-type")).toLowerCase();
-  const looksLikeZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
-  if (looksLikeZip) {
+  if (isZipWorkbook(buffer)) {
     return;
   }
   if (contentType.includes("text/html") || /login\.microsoftonline\.com/i.test(finalUrl)) {
@@ -245,11 +361,11 @@ function ensureWorkbookPayload(response, buffer) {
   throw new Error(`Workbook source returned an unexpected response (${contentType || "unknown content type"}).`);
 }
 
-async function downloadWorkbookBuffer(sourceUrl) {
-  const response = await fetch(sourceUrl, {
+async function fetchWorkbookResponse(targetUrl, headers, extraHeaders = {}) {
+  const response = await fetch(targetUrl, {
     headers: {
-      Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*",
-      ...parseHeaders(),
+      ...headers,
+      ...extraHeaders,
     },
     redirect: "follow",
   });
@@ -257,9 +373,54 @@ async function downloadWorkbookBuffer(sourceUrl) {
     throw new Error(`Workbook source responded with ${response.status}.`);
   }
   const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  ensureWorkbookPayload(response, buffer);
-  return { buffer, finalUrl: response.url || sourceUrl };
+  return {
+    response,
+    buffer: Buffer.from(arrayBuffer),
+  };
+}
+
+async function downloadWorkbookBuffer(sourceUrl) {
+  const headers = {
+    Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*",
+    ...parseHeaders(),
+  };
+  const initial = await fetchWorkbookResponse(sourceUrl, headers);
+  if (isZipWorkbook(initial.buffer)) {
+    return {
+      buffer: initial.buffer,
+      finalUrl: initial.response.url || sourceUrl,
+      resolvedSourceUrl: initial.response.url || sourceUrl,
+      authMode: "direct",
+      bootstrap: null,
+    };
+  }
+
+  const contentType = normalizeText(initial.response.headers.get("content-type")).toLowerCase();
+  if (contentType.includes("text/html")) {
+    const bootstrap = extractSharePointBootstrap(initial.buffer.toString("utf8"));
+    if (bootstrap?.fileGetUrl) {
+      const resolved = await fetchWorkbookResponse(bootstrap.fileGetUrl, headers, {
+        Referer: initial.response.url || sourceUrl,
+      });
+      ensureWorkbookPayload(resolved.response, resolved.buffer);
+      return {
+        buffer: resolved.buffer,
+        finalUrl: resolved.response.url || bootstrap.fileGetUrl,
+        resolvedSourceUrl: bootstrap.fileGetUrl,
+        authMode: "sharepoint_bootstrap",
+        bootstrap,
+      };
+    }
+  }
+
+  ensureWorkbookPayload(initial.response, initial.buffer);
+  return {
+    buffer: initial.buffer,
+    finalUrl: initial.response.url || sourceUrl,
+    resolvedSourceUrl: initial.response.url || sourceUrl,
+    authMode: "direct",
+    bootstrap: null,
+  };
 }
 
 function applyWorkbookSections(baseState, preview, sourceUrl) {
@@ -306,6 +467,10 @@ async function runWorkbookSync({ force = false, reason = "manual" } = {}) {
     updateSyncState({
       status: "disabled",
       lastError: "Set WORKBOOK_SYNC_SOURCE_URL to enable workbook sync.",
+      resolvedSourceUrl: "",
+      authMode: "",
+      sourceDocumentUrl: "",
+      accessTokenExpiresAt: "",
     });
     return getWorkbookSyncStatus();
   }
@@ -322,7 +487,14 @@ async function runWorkbookSync({ force = false, reason = "manual" } = {}) {
       lastError: "",
     });
     try {
-      const { buffer } = await downloadWorkbookBuffer(sourceUrl);
+      const download = await downloadWorkbookBuffer(sourceUrl);
+      const { buffer, resolvedSourceUrl, authMode, bootstrap } = download;
+      updateSyncState({
+        resolvedSourceUrl: resolvedSourceUrl || "",
+        authMode: authMode || "direct",
+        sourceDocumentUrl: bootstrap?.docUrl || "",
+        accessTokenExpiresAt: epochMsToIso(bootstrap?.accessTokenExpiry),
+      });
       const workbookHash = crypto.createHash("sha256").update(buffer).digest("hex");
       if (!force && syncState.workbookHash && syncState.workbookHash === workbookHash) {
         updateSyncState({
@@ -373,9 +545,13 @@ function startWorkbookSyncScheduler() {
     configured: Boolean(sourceUrl),
     enabled: Boolean(sourceUrl),
     sourceUrl,
+    resolvedSourceUrl: "",
     pollIntervalMs: POLL_INTERVAL_MS,
     status: sourceUrl ? "idle" : "disabled",
     lastError: sourceUrl ? "" : "Set WORKBOOK_SYNC_SOURCE_URL to enable workbook sync.",
+    authMode: "",
+    sourceDocumentUrl: "",
+    accessTokenExpiresAt: "",
   });
   if (!sourceUrl) return;
   if (syncTimer) clearInterval(syncTimer);
