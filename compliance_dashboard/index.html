@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fuel ETS Dashboard</title>
-  <link rel="stylesheet" href="/styles.css?v=2026.06.11.7">
+  <link rel="stylesheet" href="/styles.css?v=2026.06.30.1">
   <script src="/vendor/chart.umd.js?v=4.4.3"></script>
 </head>
 <body>
@@ -29,7 +29,9 @@
 
         <div class="topbar-icon-group">
           <span id="syncStatus" class="sync-status" title="Storage status">Local</span>
+          <span id="workbookSyncStatus" class="sync-status" title="Workbook sync status">Workbook sync off</span>
           <button id="importExcelButton" class="import-button button-blue" type="button" title="Import voyage inputs and reference libraries from Excel">Import Excel</button>
+          <button id="syncWorkbookButton" class="import-button button-amber" type="button" title="Sync the configured remote workbook now">Sync Workbook</button>
           <button id="generateReportButton" class="report-button" type="button" title="Generate vessel compliance statement">Report</button>
           <button id="libraryToggleButton" class="icon-button button-violet" type="button" title="Open calculation library">☰</button>
           <button id="exportFilteredButton" class="pdf-export-button button-green" type="button" title="Download selected vessel PDF">PDF ⤓</button>
@@ -132,6 +134,6 @@
   <datalist id="fuelTypes"></datalist>
   <datalist id="imoNumbers"></datalist>
 
-  <script type="module" src="/app.js?v=2026.06.11.7"></script>
+  <script type="module" src="/app.js?v=2026.06.30.1"></script>
 </body>
 </html>

@@ -10,13 +10,14 @@ import {
   numberOrZero,
   persistableState,
   recalculateWorkbook,
-} from "./engine.js?v=2026.06.11.7";
+} from "./engine.js?v=2026.06.30.1";
 
 const LIBRARY_PAGE_SIZE = 100;
 const CALCULATOR_HISTORY_PAGE_SIZE = 100;
 const MAX_CALCULATOR_ROWS_PER_YEAR = 1000;
 const REMOTE_SAVE_DELAY_MS = 700;
-const APP_BUILD = "2026.06.11.7";
+const WORKBOOK_SYNC_POLL_MS = 60_000;
+const APP_BUILD = "2026.06.30.1";
 const REFERENCE_SHEETS = SHEETS.filter((sheet) => !["dashboard", "calculator", "vesselSummary"].includes(sheet.key));
 const PROJECTION_BASELINE = {
   waspFactor: 0.95,
@@ -42,7 +43,9 @@ const elements = {
   viewTabs: document.getElementById("viewTabs"),
   vesselFilter: document.getElementById("vesselFilter"),
   syncStatus: document.getElementById("syncStatus"),
+  workbookSyncStatus: document.getElementById("workbookSyncStatus"),
   importExcelButton: document.getElementById("importExcelButton"),
+  syncWorkbookButton: document.getElementById("syncWorkbookButton"),
   excelFileInput: document.getElementById("excelFileInput"),
   importDialog: document.getElementById("importDialog"),
   importDialogBody: document.getElementById("importDialogBody"),
@@ -103,6 +106,17 @@ const stateStore = {
     queued: false,
     localDirty: false,
     error: null,
+  },
+  workbookSync: {
+    configured: false,
+    status: "disabled",
+    running: false,
+    sourceUrl: "",
+    lastSuccessAt: "",
+    lastError: "",
+    lastWarnings: [],
+    documentRevision: "",
+    timer: null,
   },
   ui: {
     activeView: "dashboard",
@@ -384,6 +398,44 @@ function renderSyncStatus() {
         : "Browser autosave is active. Configure R2 variables in Railway for durable cross-device storage.";
 }
 
+function renderWorkbookSyncStatus() {
+  if (!elements.workbookSyncStatus || !elements.syncWorkbookButton) return;
+  const { configured, status, running, lastSuccessAt, lastError, lastWarnings, sourceUrl } = stateStore.workbookSync;
+  const labels = {
+    disabled: "Workbook sync off",
+    idle: "Workbook sync ready",
+    syncing: "Syncing workbook...",
+    ok: "Workbook synced",
+    up_to_date: "Workbook current",
+    error: "Workbook sync error",
+  };
+  elements.workbookSyncStatus.textContent = labels[status] || "Workbook sync";
+  elements.workbookSyncStatus.className = `sync-status sync-${status}`;
+  elements.workbookSyncStatus.title =
+    status === "error"
+      ? lastError || "Workbook sync failed."
+      : `${configured ? `Source: ${sourceUrl || "configured"}` : "Configure WORKBOOK_SYNC_SOURCE_URL to enable workbook sync."}${
+          lastSuccessAt ? ` - last success ${new Date(lastSuccessAt).toLocaleString()}` : ""
+        }${lastWarnings?.length ? ` - ${lastWarnings.length} warning(s)` : ""}`;
+  elements.syncWorkbookButton.disabled = !configured || running;
+  elements.syncWorkbookButton.textContent = running ? "Syncing..." : "Sync Workbook";
+}
+
+function applyWorkbookSyncPayload(payload) {
+  stateStore.workbookSync = {
+    ...stateStore.workbookSync,
+    configured: Boolean(payload?.configured),
+    status: payload?.status || (payload?.configured ? "idle" : "disabled"),
+    running: Boolean(payload?.running),
+    sourceUrl: payload?.sourceUrl || "",
+    lastSuccessAt: payload?.lastSuccessAt || "",
+    lastError: payload?.lastError || "",
+    lastWarnings: payload?.lastWarnings || [],
+    documentRevision: payload?.documentRevision || "",
+  };
+  renderWorkbookSyncStatus();
+}
+
 function scheduleRemoteSave(delay = REMOTE_SAVE_DELAY_MS) {
   if (!stateStore.sync.ready) return;
   window.clearTimeout(stateStore.sync.timer);
@@ -463,6 +515,112 @@ async function hydrateFromServer(localState) {
     return localState;
   } finally {
     renderSyncStatus();
+  }
+}
+
+function applyServerDocument(document, storage) {
+  if (!document?.state || !Array.isArray(document.state.calculatorRows)) return false;
+  initializeRuntimeState(document.state);
+  stateStore.sync.storage = storage || stateStore.sync.storage;
+  stateStore.sync.revision = document.revision || "";
+  stateStore.sync.updatedAt = document.updatedAt || "";
+  stateStore.sync.status = "saved";
+  stateStore.sync.error = null;
+  stateStore.sync.localDirty = false;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState(stateStore.state)));
+  renderSyncStatus();
+  render();
+  return true;
+}
+
+async function refreshStateFromServerIfSafe(expectedRevision = "") {
+  if (stateStore.sync.inFlight || stateStore.sync.status === "saving" || stateStore.sync.status === "pending") {
+    return false;
+  }
+  try {
+    const response = await fetch("/api/state", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || `Storage responded with ${response.status}`);
+    }
+    const revision = payload.document?.revision || "";
+    if (!payload.exists || !payload.document?.state || (expectedRevision && revision && revision !== expectedRevision)) {
+      return false;
+    }
+    return applyServerDocument(payload.document, payload.storage);
+  } catch (error) {
+    stateStore.workbookSync.lastError = error.message;
+    renderWorkbookSyncStatus();
+    return false;
+  }
+}
+
+async function loadWorkbookSyncStatus() {
+  try {
+    const response = await fetch("/api/workbook-sync/status", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || `Workbook sync responded with ${response.status}`);
+    }
+    const previousRevision = stateStore.workbookSync.documentRevision;
+    applyWorkbookSyncPayload(payload);
+    const nextRevision = payload.documentRevision || "";
+    if (
+      nextRevision &&
+      nextRevision !== previousRevision &&
+      nextRevision !== stateStore.sync.revision &&
+      !stateStore.sync.localDirty
+    ) {
+      await refreshStateFromServerIfSafe(nextRevision);
+    }
+  } catch (error) {
+    applyWorkbookSyncPayload({
+      configured: stateStore.workbookSync.configured,
+      running: false,
+      status: "error",
+      sourceUrl: stateStore.workbookSync.sourceUrl,
+      lastSuccessAt: stateStore.workbookSync.lastSuccessAt,
+      lastWarnings: stateStore.workbookSync.lastWarnings,
+      documentRevision: stateStore.workbookSync.documentRevision,
+      lastError: error.message,
+    });
+  }
+}
+
+async function runWorkbookSyncNow(force = true) {
+  if (!elements.syncWorkbookButton || elements.syncWorkbookButton.disabled) return;
+  applyWorkbookSyncPayload({
+    ...stateStore.workbookSync,
+    running: true,
+    status: "syncing",
+  });
+  try {
+    const response = await fetch("/api/workbook-sync/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || `Workbook sync responded with ${response.status}`);
+    }
+    applyWorkbookSyncPayload(payload.sync || {});
+    if (payload.sync?.documentRevision && payload.sync.documentRevision !== stateStore.sync.revision) {
+      await refreshStateFromServerIfSafe(payload.sync.documentRevision);
+      showToast("Workbook sync applied. Dashboard data is updated.", "success");
+    } else if (payload.sync?.status === "up_to_date") {
+      showToast("Workbook is already up to date.", "info");
+    } else if (payload.sync?.status === "ok") {
+      showToast("Workbook sync completed.", "success");
+    }
+  } catch (error) {
+    applyWorkbookSyncPayload({
+      ...stateStore.workbookSync,
+      running: false,
+      status: "error",
+      lastError: error.message,
+    });
+    showToast(`Workbook sync failed: ${error.message}`, "info");
   }
 }
 
@@ -4003,6 +4161,7 @@ async function bootstrap() {
     elements.libraryContent.addEventListener("click", handleLibraryClick);
     elements.libraryContent.addEventListener("input", handleLibraryInput);
     elements.importExcelButton.addEventListener("click", () => elements.excelFileInput.click());
+    elements.syncWorkbookButton.addEventListener("click", () => runWorkbookSyncNow(true));
     elements.excelFileInput.addEventListener("change", handleExcelFileSelection);
     elements.closeImportButton.addEventListener("click", closeImportDialog);
     elements.cancelImportButton.addEventListener("click", closeImportDialog);
@@ -4065,6 +4224,12 @@ async function bootstrap() {
 
   render();
   if (!renderedLocalState) performance.mark("fuel-ets-first-render");
+  renderWorkbookSyncStatus();
+  await loadWorkbookSyncStatus();
+  window.clearInterval(stateStore.workbookSync.timer);
+  stateStore.workbookSync.timer = window.setInterval(() => {
+    loadWorkbookSyncStatus().catch(() => {});
+  }, WORKBOOK_SYNC_POLL_MS);
   loadEuaMarketSnapshot();
 }
 

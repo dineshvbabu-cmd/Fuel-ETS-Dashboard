@@ -7,6 +7,7 @@ const { URL } = require("url");
 const { getStorageStatus, loadStateDocument, saveStateDocument } = require("./storage");
 const { createComplianceStatement } = require("./report");
 const { MAX_WORKBOOK_BYTES, parseComplianceWorkbook } = require("./excel-import");
+const { getWorkbookSyncStatus, runWorkbookSync, startWorkbookSyncScheduler } = require("./workbook-sync");
 
 const PORT = Number(process.env.PORT || 3000);
 const APP_DIR = path.join(__dirname, "compliance_dashboard");
@@ -236,6 +237,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && parsed.pathname === "/api/workbook-sync/status") {
+    sendJson(res, 200, getWorkbookSyncStatus());
+    return;
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/workbook-sync/run") {
+    try {
+      const payload = await readJsonBody(req, 1024 * 1024);
+      const result = await runWorkbookSync({
+        force: Boolean(payload.force),
+        reason: "manual",
+      });
+      sendJson(res, 200, {
+        ok: result.status === "ok" || result.status === "up_to_date",
+        sync: result,
+      });
+    } catch (error) {
+      sendJson(res, error.statusCode || 500, {
+        ok: false,
+        message: error.message,
+        sync: getWorkbookSyncStatus(),
+      });
+    }
+    return;
+  }
+
   if (req.method === "GET" && parsed.pathname === "/api/state") {
     try {
       const document = await loadStateDocument();
@@ -370,4 +397,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`EU ETS and FuelEU dashboard listening on port ${PORT}`);
+  startWorkbookSyncScheduler();
 });

@@ -264,6 +264,12 @@ h4 {
   color: #fff;
 }
 
+.button-amber {
+  background: linear-gradient(135deg, #d78a1f 0%, #b46d0d 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
 .sync-status {
   min-height: 30px;
   display: inline-flex;
@@ -293,6 +299,24 @@ h4 {
 .sync-status.sync-error {
   color: #a93030;
   background: rgba(207, 83, 83, 0.12);
+}
+
+.sync-status.sync-ok,
+.sync-status.sync-up_to_date {
+  color: #147c46;
+  background: rgba(40, 160, 99, 0.12);
+  border-color: rgba(40, 160, 99, 0.22);
+}
+
+.sync-status.sync-disabled,
+.sync-status.sync-idle {
+  color: var(--muted);
+  background: rgba(83, 108, 122, 0.08);
+}
+
+.sync-status.sync-syncing {
+  color: #9b620e;
+  background: rgba(215, 138, 31, 0.12);
 }
 
 .primary-button,

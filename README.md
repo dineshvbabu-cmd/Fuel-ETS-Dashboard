@@ -10,6 +10,7 @@ This project turns the workbook `EU_ETS_FuelEU_Compliance_Calculator_10_1_1.xlsx
 - Cloudflare R2-compatible durable state storage
 - Vessel-level and multi-voyage PDF compliance statements
 - Bulk `.xlsx` and `.xlsm` imports for Voyage Inputs and matching reference-library sheets
+- Optional remote workbook sync from a configured workbook URL
 - Editable reference sheets for parameters, fuel factors, fleet, ports, flags, derogations, methodology, and formula guide
 - A JavaScript calculation engine that mirrors the workbook logic for:
   - EU ETS scope and allowance exposure
@@ -42,6 +43,27 @@ Use **Import Excel** in the application header. The importer recognizes these wo
 - `Formula_Guide`
 
 The preview lets the user select which detected sheets to apply. Voyage Inputs can replace the current rows or merge/update matching rows. Reference-library sheets are replaced only when they are present and selected. Calculated Excel columns are not imported; the application recalculates all dashboard results from the imported input and library data before saving the updated state.
+
+## Sync a remote workbook automatically
+
+The server can poll a configured workbook URL and apply any changed workbook sheets to the shared dashboard state.
+
+Set these server-side variables:
+
+```text
+WORKBOOK_SYNC_SOURCE_URL=<direct workbook download URL>
+WORKBOOK_SYNC_INTERVAL_MS=300000
+WORKBOOK_SYNC_HEADERS_JSON={"Cookie":"<SharePoint or Microsoft 365 auth cookie if required>"}
+```
+
+Notes:
+
+- `WORKBOOK_SYNC_SOURCE_URL` is required to enable automatic sync.
+- `WORKBOOK_SYNC_INTERVAL_MS` is optional. The default is `300000` (5 minutes).
+- `WORKBOOK_SYNC_HEADERS_JSON` is optional and lets you pass request headers when the workbook source requires authentication.
+- For protected SharePoint links, Railway must be able to fetch the workbook with the supplied URL and headers. If the URL redirects to Microsoft login, the workbook sync status will report that access is still required.
+
+When enabled, the dashboard header shows workbook-sync status and exposes a `Sync Workbook` button for an immediate manual refresh.
 
 ## Regenerate the workbook seed
 
@@ -93,5 +115,7 @@ When both values are set, Railway's health check remains public while every appl
 - `GET /api/storage/status` reports whether durable R2 storage is active.
 - `GET /api/state` retrieves the current shared dashboard snapshot.
 - `PUT /api/state` stores the current dashboard snapshot.
+- `GET /api/workbook-sync/status` reports remote workbook sync configuration and the last sync result.
+- `POST /api/workbook-sync/run` triggers an immediate remote workbook sync.
 - `POST /api/reports/compliance-statement` generates the vessel statement PDF.
 - `POST /api/import/excel` parses a workbook and returns a sheet-by-sheet import preview.
